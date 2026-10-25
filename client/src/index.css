@@ -1,0 +1,341 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: #030307;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Subtle, Deep Liquid Mesh Refraction */
+.liquid-mesh {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.liquid-mesh::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: -20%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle at center, rgba(120, 15, 45, 0.22) 0%, rgba(65, 20, 95, 0.12) 40%, transparent 70%);
+  filter: blur(100px);
+  animation: meshFloat1 20s ease-in-out infinite alternate;
+}
+
+.liquid-mesh::after {
+  content: '';
+  position: absolute;
+  bottom: -15%;
+  right: -15%;
+  width: 550px;
+  height: 550px;
+  background: radial-gradient(circle at center, rgba(15, 80, 50, 0.2) 0%, rgba(10, 45, 25, 0.1) 40%, transparent 70%);
+  filter: blur(110px);
+  animation: meshFloat2 24s ease-in-out infinite alternate;
+}
+
+@keyframes meshFloat1 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(50px, 60px) scale(1.1); }
+  100% { transform: translate(-25px, 30px) scale(0.95); }
+}
+
+@keyframes meshFloat2 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-60px, -50px) scale(1.15); }
+  100% { transform: translate(30px, -20px) scale(0.9); }
+}
+
+/* 
+  TONED-DOWN LIQUID GLASS CAPSULE DOCK:
+  - White opacity reduced from 0.45/0.22 down to subtle 0.12/0.08
+  - Soft, dark, moody specular edge without harsh white glow
+*/
+.liquid-glass-dock {
+  background: rgba(14, 14, 22, 0.92);
+  backdrop-filter: blur(45px) saturate(200%);
+  -webkit-backdrop-filter: blur(45px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 
+    0 16px 45px rgba(0, 0, 0, 0.92),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 15px rgba(255, 255, 255, 0.02);
+}
+
+/* Subtle Active Segment inside capsule */
+.liquid-segment-active {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 
+    0 4px 14px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* Toned-down Liquid Glass Cards */
+.liquid-glass-card {
+  background: linear-gradient(
+    140deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.01) 60%,
+    rgba(10, 10, 15, 0.7) 100%
+  );
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 
+    0 14px 35px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass-card:active {
+  transform: scale(0.98);
+}
+
+/* Toned-down Liquid Glass Pills */
+.liquid-glass-pill {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 
+    0 4px 14px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass-pill:active {
+  transform: scale(0.95);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Liquid Switch */
+.liquid-switch-on {
+  background: linear-gradient(135deg, #15803d, #14532d);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.2);
+}
+
+/* Animations */
+@keyframes pulseSubtle {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.04); opacity: 0.9; }
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 3s ease-in-out infinite;
+}
+
+/* Hide scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Live Equalizer Jumping Wave Bars */
+@keyframes eqBar1 {
+  0%, 100% { height: 4px; }
+  50% { height: 14px; }
+}
+@keyframes eqBar2 {
+  0%, 100% { height: 15px; }
+  50% { height: 5px; }
+}
+@keyframes eqBar3 {
+  0%, 100% { height: 8px; }
+  50% { height: 16px; }
+}
+@keyframes eqBar4 {
+  0%, 100% { height: 13px; }
+  50% { height: 4px; }
+}
+
+.animate-eq-1 { animation: eqBar1 0.7s ease-in-out infinite; }
+.animate-eq-2 { animation: eqBar2 0.55s ease-in-out infinite; }
+.animate-eq-3 { animation: eqBar3 0.8s ease-in-out infinite; }
+.animate-eq-4 { animation: eqBar4 0.65s ease-in-out infinite; }
+
+/* Alive Glowing Audio Scrubber Shimmer */
+@keyframes scrubberShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.animate-scrubber-shimmer {
+  animation: scrubberShimmer 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Ambient Breathing Glow */
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.35; transform: scale(0.96); }
+  50% { opacity: 0.65; transform: scale(1.04); }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 4s ease-in-out infinite;
+}
+
+/* 120FPS Ultra-Fluid Hardware-Accelerated Tab Transitions */
+@keyframes tabSlideEnterForward {
+  0% {
+    opacity: 0;
+    transform: translate3d(22px, 0, 0) scale(0.988);
+    filter: blur(2px);
+  }
+  60% {
+    opacity: 0.95;
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes tabSlideEnterBackward {
+  0% {
+    opacity: 0;
+    transform: translate3d(-22px, 0, 0) scale(0.988);
+    filter: blur(2px);
+  }
+  60% {
+    opacity: 0.95;
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+.tab-pane-enter-forward {
+  animation: tabSlideEnterForward 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity, filter;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.tab-pane-enter-backward {
+  animation: tabSlideEnterBackward 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity, filter;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* 120FPS Ultra-Fluid Player Sheet Animations */
+@keyframes playerSheetSlideUp {
+  0% {
+    transform: translate3d(0, 100%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes playerSheetSlideDown {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 100%, 0);
+  }
+}
+
+.player-sheet-enter {
+  animation: playerSheetSlideUp 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.player-sheet-exit {
+  animation: playerSheetSlideDown 280ms cubic-bezier(0.32, 0, 0.67, 0) both;
+  will-change: transform;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Staggered entrance animations for player inner components */
+@keyframes playerElementFadeUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.player-stagger-1 {
+  animation: playerElementFadeUp 360ms cubic-bezier(0.16, 1, 0.3, 1) 30ms backwards;
+  will-change: transform, opacity;
+}
+
+.player-stagger-2 {
+  animation: playerElementFadeUp 400ms cubic-bezier(0.16, 1, 0.3, 1) 60ms backwards;
+  will-change: transform, opacity;
+}
+
+.player-stagger-3 {
+  animation: playerElementFadeUp 440ms cubic-bezier(0.16, 1, 0.3, 1) 90ms backwards;
+  will-change: transform, opacity;
+}
+
+.player-stagger-4 {
+  animation: playerElementFadeUp 480ms cubic-bezier(0.16, 1, 0.3, 1) 120ms backwards;
+  will-change: transform, opacity;
+}
+
+.player-stagger-5 {
+  animation: playerElementFadeUp 520ms cubic-bezier(0.16, 1, 0.3, 1) 150ms backwards;
+  will-change: transform, opacity;
+}
+
+/* Floating Artwork Breathing Animation */
+@keyframes artworkFloat {
+  0%, 100% {
+    transform: scale(1) translateY(0px);
+  }
+  50% {
+    transform: scale(1.025) translateY(-3px);
+  }
+}
+
+.animate-artwork-float {
+  animation: artworkFloat 5s ease-in-out infinite;
+}
