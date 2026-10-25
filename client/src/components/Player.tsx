@@ -251,8 +251,17 @@ export const Player: React.FC<PlayerProps> = ({
 
   const formatTime = (time: number) => {
     if (isNaN(time) || time < 0) return '0:00';
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
+    const totalSeconds = Math.floor(time);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    // If more than 60 minutes (1 hour+), display in hours:mins:seconds
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    // Otherwise display in minutes and seconds (e.g. 3:45, 12:05)
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
