@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Sliders, 
   Volume2, 
@@ -13,7 +14,13 @@ import {
   Smartphone,
   RefreshCw,
   Globe,
-  Code2
+  Code2,
+  Crown,
+  X,
+  Zap,
+  ChevronRight,
+  Copy,
+  ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './AuthModal';
@@ -24,8 +31,86 @@ interface SettingsProps {
 }
 
 export const Settings: React.FC<SettingsProps> = ({ onOpenTaste }) => {
-  const { user, signOut, userData } = useAuth();
+  const { user, signOut, userData, activateAccountPremium } = useAuth();
   const [showModal, setShowModal] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [copiedUpi, setCopiedUpi] = useState(false);
+  const [utrNumber, setUtrNumber] = useState('');
+  const [utrError, setUtrError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  // One-time reset of any old global non-account-linked test purchases
+  useEffect(() => {
+    try {
+      localStorage.removeItem('ytify_premium_expires_at');
+      localStorage.removeItem('ytify_active_utr');
+    } catch {}
+  }, []);
+
+  // Premium status is 100% strictly linked to THIS specific Google account in Firestore
+  const accountPremiumExpiresAt = (user && !user.isGuest) ? (userData.premiumExpiresAt || 0) : 0;
+  const isPremiumActive = accountPremiumExpiresAt > Date.now();
+  const daysRemaining = isPremiumActive 
+    ? Math.max(1, Math.ceil((accountPremiumExpiresAt - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0;
+
+  const handleCopyUpi = () => {
+    try {
+      navigator.clipboard?.writeText('8902281688@mbk');
+      setCopiedUpi(true);
+      showToast('UPI ID copied: 8902281688@mbk');
+      setTimeout(() => setCopiedUpi(false), 2500);
+    } catch {
+      showToast('UPI ID: 8902281688@mbk');
+    }
+  };
+
+  const handleVerifyAndActivate = async () => {
+    if (!user || user.isGuest) {
+      setShowPaymentModal(false);
+      setShowModal(true);
+      showToast('Please sign in with Google first to link your Premium subscription!');
+      return;
+    }
+
+    const cleaned = utrNumber.trim().replace(/\s+/g, '');
+    if (!cleaned) {
+      setUtrError('Please enter the 12-digit UPI Ref / UTR number from your payment app');
+      return;
+    }
+    if (!/^\d{12}$/.test(cleaned)) {
+      setUtrError('UTR must be exactly 12 digits (e.g. 429108392102)');
+      return;
+    }
+
+    setUtrError('');
+    setIsVerifying(true);
+
+    try {
+      const usedUtrs = JSON.parse(localStorage.getItem('ytify_used_utrs') || '[]');
+      if (usedUtrs.includes(cleaned)) {
+        setUtrError('This 12-digit UTR has already been submitted or redeemed.');
+        setIsVerifying(false);
+        return;
+      }
+
+      await activateAccountPremium(cleaned);
+
+      usedUtrs.push(cleaned);
+      localStorage.setItem('ytify_used_utrs', JSON.stringify(usedUtrs));
+
+      setShowPaymentModal(false);
+      setShowPremiumModal(false);
+      setUtrNumber('');
+      showToast('🎉 Payment verified! 2 Months ytify Premium linked to your Google Account!');
+    } catch (err: any) {
+      setUtrError(err?.message || 'Verification error. Please check your network.');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   const [streamQuality, setStreamQuality] = useState<'normal' | 'high' | 'ultra'>('high');
   const [dataSaver, setDataSaver] = useState(false);
   const [normalizeVolume, setNormalizeVolume] = useState(true);
@@ -38,6 +123,20 @@ export const Settings: React.FC<SettingsProps> = ({ onOpenTaste }) => {
       setToastMessage((c) => (c === msg ? null : c));
     }, 2800);
   };
+
+  // Lock body scroll when modals are opened
+  useEffect(() => {
+    if (showPremiumModal || showPaymentModal) {
+      const origOverflow = document.body.style.overflow;
+      const origTouchAction = document.body.style.touchAction;
+      document.body.style.overflow = 'hidden';
+      document.body.style.touchAction = 'none';
+      return () => {
+        document.body.style.overflow = origOverflow;
+        document.body.style.touchAction = origTouchAction;
+      };
+    }
+  }, [showPremiumModal, showPaymentModal]);
 
   // Dolby Atmos Engine State
   const [dolbyEnabled, setDolbyEnabled] = useState(() => {
@@ -206,6 +305,89 @@ export const Settings: React.FC<SettingsProps> = ({ onOpenTaste }) => {
           </div>
         )}
       </div>
+
+      {/* MOBILE-FIRST CLEAN MINIMALIST PREMIUM CARD */}
+      {!isPremiumActive ? (
+        <div 
+          onClick={() => {
+            if (!user || user.isGuest) {
+              setShowModal(true);
+            } else {
+              setShowPaymentModal(true);
+            }
+          }}
+          className="mb-5 rounded-2xl p-4 sm:p-5 bg-gradient-to-b from-[#18181f] to-[#121217] border border-white/10 shadow-lg cursor-pointer active:scale-[0.99] transition-all select-none"
+        >
+          {/* Top Row: Icon + Title + Price Pill */}
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-400/15 border border-amber-400/25 flex items-center justify-center flex-shrink-0 text-amber-400">
+                <Crown size={18} />
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                ytify Premium
+              </h3>
+            </div>
+            <span className="text-[11px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-2.5 py-0.5 rounded-full">
+              ₹10 for 2 Months
+            </span>
+          </div>
+
+          {/* Perks explanation */}
+          <p className="text-xs text-white/55 mb-3 leading-relaxed">
+            Continuous background playback & 100% ad-free listening across all your devices.
+          </p>
+
+          {/* Action Button: Full-width on mobile, tactile, clean contrast */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!user || user.isGuest) {
+                setShowModal(true);
+              } else {
+                setShowPaymentModal(true);
+              }
+            }}
+            className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-100 active:bg-neutral-200 text-neutral-950 font-bold text-xs sm:text-sm shadow flex items-center justify-center gap-1.5 transition-transform active:scale-[0.98] cursor-pointer"
+          >
+            <span>{(!user || user.isGuest) ? 'Sign in with Google & Get Premium (₹10)' : 'Activate 2 Months Premium • ₹10'}</span>
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      ) : (
+        /* PURCHASED PREMIUM ACTIVE CARD WITH COUNTDOWN */
+        <div 
+          onClick={() => setShowPremiumModal(true)}
+          className="mb-5 rounded-2xl p-4 sm:p-5 bg-gradient-to-b from-[#18181f] to-[#121217] border border-amber-400/30 shadow-lg cursor-pointer active:scale-[0.99] transition-all select-none"
+        >
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-400/20 border border-amber-400/35 flex items-center justify-center flex-shrink-0 text-amber-300">
+                <Crown size={18} fill="currentColor" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  ytify Premium Active
+                </h3>
+              </div>
+            </div>
+            <span className="text-[11px] font-bold text-amber-300 bg-amber-400/15 border border-amber-400/30 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+              <ShieldCheck size={12} />
+              <span>{daysRemaining} Days Left</span>
+            </span>
+          </div>
+
+          <p className="text-xs text-white/55 mb-2.5">
+            Background Playing & Zero Ads active • Linked to {user?.email || 'your Google account'}
+          </p>
+
+          <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-white/40">
+            <span>2-Month Subscription</span>
+            <span className="text-amber-300 font-medium">Expires in {daysRemaining} days</span>
+          </div>
+        </div>
+      )}
 
       {/* Taste Onboarding / Recommendation Preferences */}
       <div className="mb-6">
@@ -540,6 +722,228 @@ export const Settings: React.FC<SettingsProps> = ({ onOpenTaste }) => {
       </div>
 
       <AuthModal isOpen={showModal} onClose={() => setShowModal(false)} />
+
+      {/* SIMPLEST CLEAN TONE PREMIUM OVERVIEW MODAL */}
+      {showPremiumModal && createPortal(
+        <div 
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200 touch-none overscroll-none"
+          onClick={() => setShowPremiumModal(false)}
+          onTouchMove={(e) => {
+            if (e.target === e.currentTarget) e.preventDefault();
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-[#101115] border border-neutral-800 rounded-3xl p-6 sm:p-7 shadow-[0_25px_80px_rgba(0,0,0,0.85)] animate-in zoom-in-95 duration-200 relative overflow-hidden text-white"
+          >
+            {/* Close Button X */}
+            <button 
+              type="button" 
+              onClick={() => setShowPremiumModal(false)} 
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Header: Crown & Title */}
+            <div className="flex flex-col items-center text-center mb-5">
+              <div className="w-14 h-14 rounded-2xl bg-amber-400/15 border border-amber-400/25 flex items-center justify-center mb-3">
+                <Crown size={28} className="text-amber-400" />
+              </div>
+              <span className="text-[10px] font-bold tracking-widest uppercase text-amber-300 bg-amber-400/10 border border-amber-400/20 px-2.5 py-0.5 rounded-full mb-1">
+                2 Months Subscription • ₹10
+              </span>
+              <h2 className="text-xl font-bold text-white tracking-tight">ytify Premium</h2>
+              <p className="text-xs text-white/50 mt-1 max-w-xs">
+                Enjoy uninterrupted music with background playback and pure zero-ad listening.
+              </p>
+            </div>
+
+            {/* Features Included */}
+            <div className="space-y-2.5 mb-5">
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/5">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/10 flex items-center justify-center flex-shrink-0 text-amber-300">
+                  <Smartphone size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-semibold text-white">Background Playing</h4>
+                  <p className="text-[11px] text-white/50 mt-0.5">
+                    Music continues playing even when your phone screen is locked or while using other apps.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/5">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/10 flex items-center justify-center flex-shrink-0 text-amber-300">
+                  <Zap size={16} />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-semibold text-white">Zero Ads</h4>
+                  <p className="text-[11px] text-white/50 mt-0.5">
+                    Zero commercial interruptions, zero audio promotions. Pure uninterrupted music.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Price & Action */}
+            <div className="p-3.5 rounded-2xl bg-neutral-900 border border-neutral-800 text-center mb-4">
+              <div className="flex items-baseline justify-center gap-1.5">
+                <span className="text-2xl font-black text-white">₹10</span>
+                <span className="text-xs text-white/50">/ 2 Months</span>
+                <span className="text-[10px] text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full font-semibold ml-1">
+                  ₹5 / Month
+                </span>
+              </div>
+              {isPremiumActive && (
+                <p className="text-xs text-amber-300 font-semibold mt-1">
+                  Active Subscription: {daysRemaining} days remaining
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowPremiumModal(false);
+                setShowPaymentModal(true);
+              }}
+              className="w-full py-3 px-4 rounded-xl bg-white hover:bg-neutral-200 text-neutral-950 font-bold text-sm shadow cursor-pointer active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+            >
+              <span>{isPremiumActive ? 'Renew / Extend Plan (₹10)' : 'Pay ₹10 with UPI'}</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* DEDICATED UPI PAYMENT MODAL (WITH QR CODE & DIRECT GATEWAY) */}
+      {showPaymentModal && createPortal(
+        <div 
+          className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200 touch-none overscroll-none"
+          onClick={() => setShowPaymentModal(false)}
+          onTouchMove={(e) => {
+            if (e.target === e.currentTarget) e.preventDefault();
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-[#101115] border border-neutral-800 rounded-3xl p-5 sm:p-6 shadow-[0_25px_80px_rgba(0,0,0,0.9)] animate-in zoom-in-95 duration-200 relative overflow-hidden text-white"
+          >
+            {/* Close Button X */}
+            <button 
+              type="button" 
+              onClick={() => setShowPaymentModal(false)} 
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Header */}
+            <div className="text-center mb-3">
+              <div className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-2.5 py-0.5 rounded-full mb-1">
+                <Crown size={12} />
+                <span>₹10 for 2 Months</span>
+              </div>
+              <h2 className="text-lg font-bold text-white tracking-tight">Pay via UPI</h2>
+              <p className="text-xs text-white/50 mt-0.5">Scan the QR code or open any UPI app</p>
+            </div>
+
+            {/* QR Code Container */}
+            <div className="flex flex-col items-center justify-center p-3 bg-white rounded-2xl shadow-md mb-3">
+              <img 
+                src="/premium-qr.png" 
+                alt="UPI QR Code - 8902281688@mbk" 
+                className="w-48 h-48 sm:w-52 sm:h-52 object-contain"
+              />
+              <div className="flex items-center gap-2 mt-2 px-2.5 py-1 bg-neutral-100 rounded-lg border border-neutral-200 w-full justify-between">
+                <span className="text-[11px] font-mono font-bold text-neutral-800 truncate">
+                  8902281688@mbk
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyUpi}
+                  className="text-[10px] font-bold text-neutral-700 hover:text-black flex items-center gap-1 cursor-pointer flex-shrink-0"
+                >
+                  <Copy size={11} />
+                  <span>{copiedUpi ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2 mb-3">
+              {/* Trigger native Android / iOS system UPI app chooser */}
+              <a
+                href="upi://pay?pa=8902281688@mbk&pn=Soutrik%20Dutta&am=10&cu=INR&tn=ytify%20Premium%202%20Months"
+                className="w-full py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-200 text-neutral-950 font-bold text-xs flex items-center justify-center gap-2 shadow active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <Smartphone size={14} />
+                <span>Pay ₹10 with UPI App (GPay/PhonePe/Paytm)</span>
+              </a>
+            </div>
+
+            {/* Verification Section: 12-digit UPI UTR Number */}
+            <div className="pt-3 border-t border-neutral-800 text-left">
+              <label className="block text-xs font-bold text-white mb-1.5 flex items-center justify-between">
+                <span>Enter 12-digit UPI Ref / UTR No.</span>
+                <span className="text-[10px] text-amber-300 font-semibold">From Payment Receipt</span>
+              </label>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  maxLength={12}
+                  inputMode="numeric"
+                  value={utrNumber}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 12);
+                    setUtrNumber(val);
+                    if (utrError) setUtrError('');
+                  }}
+                  placeholder="e.g. 429108392102"
+                  className="w-full bg-neutral-900 border border-neutral-700 focus:border-amber-400 text-white font-mono text-sm px-3.5 py-2.5 rounded-xl outline-none placeholder:text-white/30 tracking-wider shadow-inner"
+                />
+                {utrNumber.length > 0 && (
+                  <span className="absolute right-3 top-2.5 text-[11px] font-mono text-white/40">
+                    {utrNumber.length}/12
+                  </span>
+                )}
+              </div>
+
+              {utrError && (
+                <p className="text-[11px] text-rose-400 mt-1 font-medium">
+                  {utrError}
+                </p>
+              )}
+            </div>
+
+            {/* Payment Verification & Activation Button */}
+            <button
+              type="button"
+              disabled={isVerifying || utrNumber.length !== 12}
+              onClick={handleVerifyAndActivate}
+              className="w-full py-2.5 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-950 font-black text-xs shadow-md cursor-pointer active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 mt-3"
+            >
+              {isVerifying ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" />
+                  <span>Verifying UTR...</span>
+                </>
+              ) : (
+                <>
+                  <Check size={14} />
+                  <span>Verify UTR & Activate 2 Months</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Floating Animated Toast */}
       {toastMessage && (
