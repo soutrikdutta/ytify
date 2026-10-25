@@ -120,6 +120,35 @@ function MainApp() {
   const pendingSongRef = useRef<Song | null>(null);
   const currentSongRef = useRef<Song | null>(null);
 
+  // Dedicated account-switch & signout reset: stops audio immediately and clears player state
+  const prevUserUidRef = useRef<string | undefined>(user?.uid);
+  useEffect(() => {
+    const handleResetAudio = () => {
+      try {
+        if (ytPlayerRef.current?.stopVideo) {
+          ytPlayerRef.current.stopVideo();
+        }
+      } catch {}
+      setIsPlaying(false);
+      setCurrentSong(null);
+      currentSongRef.current = null;
+      setCurrentTime(0);
+      setQueue([]);
+      setQueueIndex(-1);
+    };
+
+    window.addEventListener('ytify_signout', handleResetAudio);
+
+    if (prevUserUidRef.current !== undefined && prevUserUidRef.current !== user?.uid) {
+      handleResetAudio();
+    }
+    prevUserUidRef.current = user?.uid;
+
+    return () => {
+      window.removeEventListener('ytify_signout', handleResetAudio);
+    };
+  }, [user?.uid]);
+
   // Dolby Atmos Live State
   const [dolbyEnabled, setDolbyEnabled] = useState(() => {
     const s = localStorage.getItem('ytify_dolby_enabled');

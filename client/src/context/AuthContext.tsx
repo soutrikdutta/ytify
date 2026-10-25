@@ -61,39 +61,15 @@ const defaultUserData: UserData = {
 
 const getInitialUserData = (): UserData => {
   try {
-    // 1. Dedicated persistent history key so listening history is NEVER lost or refreshed
-    const histRaw = localStorage.getItem('ytify_playback_history');
-    const dedicatedHistory: Song[] = histRaw ? JSON.parse(histRaw) : [];
-
-    // 2. Dedicated custom playlists key
-    const plRaw = localStorage.getItem('ytify_custom_playlists');
-    const dedicatedPlaylists: { id: string; name: string; songs: Song[] }[] = plRaw ? JSON.parse(plRaw) : [];
-
-    // 3. Check logged-in user specific cache
     const savedUserStr = localStorage.getItem('ytify_current_user');
-    let userSpecificData: UserData | null = null;
     if (savedUserStr) {
       const u = JSON.parse(savedUserStr);
       if (u && u.uid) {
         const raw = localStorage.getItem(`ytify_data_${u.uid}`);
-        if (raw) userSpecificData = JSON.parse(raw);
+        if (raw) return JSON.parse(raw);
       }
     }
-
-    // 4. Check generic storage
-    const genericRaw = localStorage.getItem('ytify_user_data');
-    const genericData: UserData = genericRaw ? JSON.parse(genericRaw) : defaultUserData;
-
-    const base = userSpecificData || genericData;
-    const history = (base.history && base.history.length > 0) ? base.history : dedicatedHistory;
-    const playlists = (base.playlists && base.playlists.length > 0) ? base.playlists : dedicatedPlaylists;
-
-    return {
-      likedSongs: base.likedSongs || [],
-      history: history || [],
-      playlists: playlists || [],
-      preferences: base.preferences
-    };
+    return defaultUserData;
   } catch {
     return defaultUserData;
   }
@@ -108,8 +84,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [userData, setUserData] = useState<UserData>(getInitialUserData);
-
   const [loading, setLoading] = useState(false);
+
+  // Helper to persist data strictly for the active user account
+  const persistUserData = (updated: UserData, targetUser: UserProfile | null) => {
+    setUserData(updated);
+    const targetUid = targetUser?.uid || 'guest_session';
+    try {
+      localStorage.setItem(`ytify_data_${targetUid}`, JSON.stringify(updated));
+      if (targetUser && !targetUser.isGuest) {
+        const userRef = doc(db, 'users', targetUser.uid);
+        setDoc(userRef, updated, { merge: true }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Storage sync error:', e);
+    }
+  };
 
   // Handle mobile redirect auth
   useEffect(() => {
@@ -131,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
   }, []);
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state (Loads strict per-account data from Firestore & LocalCache)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -144,57 +134,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(profile);
         localStorage.setItem('ytify_current_user', JSON.stringify(profile));
 
-        // Load Firestore data with smart non-destructive merge (never wipes local listening history)
+        // 1. Immediately switch to this specific account's cache if available
+        const localAccountCache = localStorage.getItem(`ytify_data_${currentUser.uid}`);
+        if (localAccountCache) {
+          try {
+            setUserData(JSON.parse(localAccountCache));
+          } catch {
+            setUserData(defaultUserData);
+          }
+        } else {
+          setUserData(defaultUserData);
+        }
+
+        // 2. Fetch fresh account-specific data from Firestore (NO cross-account merging)
         try {
           const userRef = doc(db, 'users', currentUser.uid);
           const snap = await getDoc(userRef);
           if (snap.exists()) {
             const remoteData = snap.data() as UserData;
-            setUserData((prev) => {
-              // Merge local history with remote history so we never lose newly played tracks
-              const historyMap = new Map<string, Song>();
-              (prev.history || []).forEach(s => historyMap.set(s.videoId, s));
-              (remoteData.history || []).forEach(s => {
-                if (!historyMap.has(s.videoId)) historyMap.set(s.videoId, s);
-              });
-              const mergedHistory = Array.from(historyMap.values()).slice(0, 50);
-
-              const likedMap = new Map<string, Song>();
-              (prev.likedSongs || []).forEach(s => likedMap.set(s.videoId, s));
-              (remoteData.likedSongs || []).forEach(s => {
-                if (!likedMap.has(s.videoId)) likedMap.set(s.videoId, s);
-              });
-
-              const merged: UserData = {
-                likedSongs: Array.from(likedMap.values()),
-                history: mergedHistory,
-                playlists: remoteData.playlists?.length ? remoteData.playlists : (prev.playlists || []),
-                preferences: remoteData.preferences || prev.preferences
-              };
-
-              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(merged));
-              localStorage.setItem('ytify_user_data', JSON.stringify(merged));
-              localStorage.setItem('ytify_playback_history', JSON.stringify(mergedHistory));
-              return merged;
-            });
+            const accountData: UserData = {
+              likedSongs: remoteData.likedSongs || [],
+              history: remoteData.history || [],
+              playlists: remoteData.playlists || [],
+              preferences: remoteData.preferences
+            };
+            setUserData(accountData);
+            localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(accountData));
           } else {
-            setUserData((prev) => {
-              setDoc(userRef, prev).catch(() => {});
-              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(prev));
-              return prev;
-            });
+            // Brand new Google account: start clean and write empty initial profile
+            const freshData: UserData = {
+              likedSongs: [],
+              history: [],
+              playlists: []
+            };
+            setUserData(freshData);
+            localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(freshData));
+            await setDoc(userRef, freshData).catch(() => {});
           }
         } catch (err) {
-          console.warn('Firestore offline fallback:', err);
-          const cached = localStorage.getItem(`ytify_data_${currentUser.uid}`);
-          if (cached) setUserData(JSON.parse(cached));
+          console.warn('Firestore offline notice:', err);
         }
       } else {
         const localUser = localStorage.getItem('ytify_current_user');
         if (!localUser) {
           setUser(null);
-          const cached = localStorage.getItem('ytify_user_data');
-          if (cached) setUserData(JSON.parse(cached));
+          setUserData(defaultUserData);
         }
       }
       setLoading(false);
@@ -258,8 +242,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Instant Guest Access for Frictionless Browsing & Playback
   const continueAsGuest = () => {
+    const guestUid = 'guest_session';
     const guestProfile: UserProfile = {
-      uid: 'guest_' + Math.random().toString(36).substring(2, 9),
+      uid: guestUid,
       name: 'Guest Listener',
       email: 'guest@ytify.app',
       photoURL: '',
@@ -267,6 +252,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(guestProfile);
     localStorage.setItem('ytify_current_user', JSON.stringify(guestProfile));
+    const cachedGuest = localStorage.getItem(`ytify_data_${guestUid}`);
+    if (cachedGuest) {
+      try {
+        setUserData(JSON.parse(cachedGuest));
+      } catch {
+        setUserData(defaultUserData);
+      }
+    } else {
+      setUserData(defaultUserData);
+    }
   };
 
   const signOut = async () => {
@@ -278,6 +273,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem('ytify_current_user');
     setUserData(defaultUserData);
+    sessionStorage.clear();
+    // Signal App.tsx to immediately halt music and reset player
+    window.dispatchEvent(new CustomEvent('ytify_signout'));
   };
 
   const toggleLike = async (song: Song) => {
@@ -287,44 +285,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : [song, ...userData.likedSongs];
 
     const updated = { ...userData, likedSongs: updatedLiked };
-    setUserData(updated);
-
-    if (user) {
-      localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-      try {
-        const userRef = doc(db, 'users', user.uid);
-        await setDoc(userRef, updated, { merge: true });
-      } catch (e) {
-        console.warn('Firestore sync notice:', e);
-      }
-    } else {
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-    }
+    persistUserData(updated, user);
   };
 
   const addToHistory = async (song: Song) => {
-    setUserData((prev) => {
-      const filtered = (prev.history || []).filter(s => s.videoId !== song.videoId);
-      const updatedHistory = [song, ...filtered].slice(0, 50);
-      const updated: UserData = { ...prev, history: updatedHistory };
-
-      try {
-        localStorage.setItem('ytify_playback_history', JSON.stringify(updatedHistory));
-        localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-        if (user) {
-          localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-        }
-      } catch (e) {
-        console.warn('Playback history save error:', e);
-      }
-
-      if (user) {
-        const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
-      }
-
-      return updated;
-    });
+    const filtered = (userData.history || []).filter(s => s.videoId !== song.videoId);
+    const updatedHistory = [song, ...filtered].slice(0, 50);
+    const updated: UserData = { ...userData, history: updatedHistory };
+    persistUserData(updated, user);
   };
 
   const isLiked = (videoId: string) => {
@@ -333,23 +301,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const savePreferences = async (prefs: UserPreferences) => {
     const updated: UserData = { ...userData, preferences: prefs };
-    setUserData(updated);
-
-    // Clear feed cache so Home immediately generates personalized feed
+    persistUserData(updated, user);
     sessionStorage.clear();
-
-    if (user) {
-      localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-      try {
-        const userRef = doc(db, 'users', user.uid);
-        // Non-blocking fire-and-forget to Firestore
-        setDoc(userRef, { preferences: prefs }, { merge: true }).catch(() => {});
-      } catch (e) {
-        console.warn('Firestore preferences sync notice:', e);
-      }
-    } else {
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-    }
   };
 
   const createPlaylist = async (name: string) => {
@@ -362,37 +315,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     const updatedPlaylists = [newPlaylist, ...(userData.playlists || [])];
     const updated: UserData = { ...userData, playlists: updatedPlaylists };
-    setUserData(updated);
-
-    try {
-      localStorage.setItem('ytify_custom_playlists', JSON.stringify(updatedPlaylists));
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-      if (user) {
-        localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-        const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Playlist save notice:', e);
-    }
+    persistUserData(updated, user);
   };
 
   const deletePlaylist = async (id: string) => {
     const updatedPlaylists = (userData.playlists || []).filter(p => p.id !== id);
     const updated: UserData = { ...userData, playlists: updatedPlaylists };
-    setUserData(updated);
-
-    try {
-      localStorage.setItem('ytify_custom_playlists', JSON.stringify(updatedPlaylists));
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-      if (user) {
-        localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-        const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Playlist delete notice:', e);
-    }
+    persistUserData(updated, user);
   };
 
   const addSongToPlaylist = async (playlistId: string, song: Song) => {
@@ -407,19 +336,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return p;
     });
     const updated: UserData = { ...userData, playlists: updatedPlaylists };
-    setUserData(updated);
-
-    try {
-      localStorage.setItem('ytify_custom_playlists', JSON.stringify(updatedPlaylists));
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-      if (user) {
-        localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-        const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Playlist add notice:', e);
-    }
+    persistUserData(updated, user);
   };
 
   const removeSongFromPlaylist = async (playlistId: string, videoId: string) => {
@@ -433,19 +350,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return p;
     });
     const updated: UserData = { ...userData, playlists: updatedPlaylists };
-    setUserData(updated);
-
-    try {
-      localStorage.setItem('ytify_custom_playlists', JSON.stringify(updatedPlaylists));
-      localStorage.setItem('ytify_user_data', JSON.stringify(updated));
-      if (user) {
-        localStorage.setItem(`ytify_data_${user.uid}`, JSON.stringify(updated));
-        const userRef = doc(db, 'users', user.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Playlist remove song notice:', e);
-    }
+    persistUserData(updated, user);
   };
 
   return (
