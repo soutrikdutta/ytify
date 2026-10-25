@@ -26,6 +26,8 @@ export interface UserData {
   searchHistory?: string[];
   playlists: { id: string; name: string; songs: Song[] }[];
   preferences?: UserPreferences;
+  premiumExpiresAt?: number;
+  premiumUtr?: string;
 }
 
 export interface UserProfile {
@@ -55,6 +57,7 @@ interface AuthContextType {
   addSearchHistory: (term: string) => Promise<void>;
   removeSearchHistory: (term: string) => Promise<void>;
   clearSearchHistory: () => Promise<void>;
+  activateAccountPremium: (utr: string) => Promise<void>;
 }
 
 const defaultUserData: UserData = {
@@ -62,7 +65,8 @@ const defaultUserData: UserData = {
   history: [],
   searchHistory: [],
   playlists: [],
-  preferences: { artists: [], genres: [], languages: [] }
+  preferences: { artists: [], genres: [], languages: [] },
+  premiumExpiresAt: 0
 };
 
 const getInitialUserData = (): UserData => {
@@ -149,60 +153,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(profile);
         localStorage.setItem('ytify_current_user', JSON.stringify(profile));
 
-        // 1. Immediately switch to this specific account's cache for 0ms startup
-        const localAccountCache = localStorage.getItem(`ytify_data_${currentUser.uid}`);
-        if (localAccountCache) {
-          try {
-            setUserData(JSON.parse(localAccountCache));
-          } catch {
-            setUserData(defaultUserData);
-          }
-        } else {
-          setUserData(defaultUserData);
-        }
-
-        // 2. Attach live real-time Firestore listener: any device update syncs instantly
+        // Real-time Firestore snapshot listener for this user
         try {
-          const userRef = doc(db, 'users', currentUser.uid);
-          firestoreUnsubRef.current = onSnapshot(userRef, (docSnap) => {
+          const userDocRef = doc(db, 'users', currentUser.uid);
+          firestoreUnsubRef.current = onSnapshot(userDocRef, (docSnap) => {
             if (docSnap.exists()) {
-              const remote = docSnap.data() as UserData;
-              const accountData: UserData = {
-                likedSongs: remote.likedSongs || [],
-                history: remote.history || [],
-                searchHistory: remote.searchHistory || [],
-                playlists: remote.playlists || [],
-                preferences: remote.preferences || { artists: [], genres: [], languages: [] }
+              const remoteData = docSnap.data() as UserData;
+              const merged: UserData = {
+                likedSongs: remoteData.likedSongs || [],
+                history: remoteData.history || [],
+                searchHistory: remoteData.searchHistory || [],
+                playlists: remoteData.playlists || [],
+                preferences: remoteData.preferences || { artists: [], genres: [], languages: [] },
+                premiumExpiresAt: remoteData.premiumExpiresAt || 0,
+                premiumUtr: remoteData.premiumUtr || undefined
               };
-              setUserData(accountData);
-              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(accountData));
+              setUserData(merged);
+              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(merged));
             } else {
-              // Brand new Google account: initialize their clean profile document in Firestore
-              const freshData: UserData = {
-                likedSongs: [],
-                history: [],
-                searchHistory: [],
-                playlists: [],
-                preferences: { artists: [], genres: [], languages: [] }
-              };
-              setUserData(freshData);
-              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(freshData));
-              setDoc(userRef, freshData).catch((err) => console.warn('Init firestore doc err:', err));
+              // Initial document creation for new user
+              setDoc(userDocRef, defaultUserData, { merge: true }).catch(() => {});
+              setUserData(defaultUserData);
+              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(defaultUserData));
             }
           }, (err) => {
-            console.warn('Firestore live listener error:', err);
+            console.warn('Firestore onSnapshot listener error:', err);
           });
         } catch (err) {
-          console.warn('Firestore listener setup notice:', err);
+          console.warn('Firestore sync init error:', err);
         }
       } else {
-        const localUser = localStorage.getItem('ytify_current_user');
-        if (!localUser) {
-          setUser(null);
-          setUserData(defaultUserData);
-        }
+        // User signed out or guest mode
+        setUser(null);
+        localStorage.removeItem('ytify_current_user');
+        setUserData(defaultUserData);
       }
-      setLoading(false);
     });
 
     return () => {
@@ -214,75 +199,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  // Real Google Sign-In with Firebase
   const signInWithGoogle = async () => {
+    setLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      if (result.user) {
-        const profile: UserProfile = {
-          uid: result.user.uid,
-          name: result.user.displayName || result.user.email?.split('@')[0] || 'User',
-          email: result.user.email || '',
-          photoURL: result.user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(result.user.displayName || 'User')}&background=15803d&color=fff&size=128&bold=true`
-        };
-        setUser(profile);
-        localStorage.setItem('ytify_current_user', JSON.stringify(profile));
-      }
-    } catch (err: any) {
-      console.warn('Google Sign-In Popup notice:', err);
-      if (
-        err.code === 'auth/popup-blocked' ||
-        err.code === 'auth/operation-not-supported-in-this-environment' ||
-        err.message?.includes('popup')
-      ) {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isMobile) {
         await signInWithRedirect(auth, googleProvider);
-        return;
+      } else {
+        const result = await signInWithPopup(auth, googleProvider);
+        if (result && result.user) {
+          const profile: UserProfile = {
+            uid: result.user.uid,
+            name: result.user.displayName || result.user.email?.split('@')[0] || 'User',
+            email: result.user.email || '',
+            photoURL: result.user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(result.user.displayName || 'User')}&background=15803d&color=fff&size=128&bold=true`
+          };
+          setUser(profile);
+          localStorage.setItem('ytify_current_user', JSON.stringify(profile));
+        }
       }
-      throw err;
+    } catch (error: any) {
+      if (error?.code !== 'auth/popup-closed-by-user') {
+        console.warn('Google sign in notice:', error);
+      }
+      throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Direct Email Login Fallback
   const loginWithEmailUser = (email: string, name?: string) => {
-    const derivedName = name || email.split('@')[0];
-    const formattedName = derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
-    const uid = 'usr_' + btoa(email.toLowerCase()).replace(/=/g, '');
-
+    const uid = 'usr_' + btoa(email.toLowerCase()).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+    const displayName = name || email.split('@')[0];
     const profile: UserProfile = {
       uid,
-      name: formattedName,
-      email: email.trim(),
-      photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(formattedName)}&background=15803d&color=fff&size=128&bold=true`
+      name: displayName,
+      email,
+      photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=15803d&color=fff&size=128&bold=true`
     };
-
     setUser(profile);
     localStorage.setItem('ytify_current_user', JSON.stringify(profile));
 
-    const existing = localStorage.getItem(`ytify_data_${uid}`);
-    if (existing) {
-      setUserData(JSON.parse(existing));
-    } else {
-      setUserData(defaultUserData);
-      localStorage.setItem(`ytify_data_${uid}`, JSON.stringify(defaultUserData));
-    }
-  };
-
-  // Instant Guest Access for Frictionless Browsing & Playback
-  const continueAsGuest = () => {
-    const guestUid = 'guest_session';
-    const guestProfile: UserProfile = {
-      uid: guestUid,
-      name: 'Guest Listener',
-      email: 'guest@ytify.app',
-      photoURL: '',
-      isGuest: true
-    };
-    setUser(guestProfile);
-    localStorage.setItem('ytify_current_user', JSON.stringify(guestProfile));
-    const cachedGuest = localStorage.getItem(`ytify_data_${guestUid}`);
-    if (cachedGuest) {
+    const saved = localStorage.getItem(`ytify_data_${uid}`);
+    if (saved) {
       try {
-        setUserData(JSON.parse(cachedGuest));
+        setUserData(JSON.parse(saved));
       } catch {
         setUserData(defaultUserData);
       }
@@ -291,23 +252,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const continueAsGuest = () => {
+    const guestUser: UserProfile = {
+      uid: 'guest_' + Math.random().toString(36).substring(2, 9),
+      name: 'Guest Listener',
+      email: '',
+      photoURL: '',
+      isGuest: true
+    };
+    setUser(guestUser);
+    localStorage.setItem('ytify_current_user', JSON.stringify(guestUser));
+    setUserData(defaultUserData);
+  };
+
   const signOut = async () => {
     try {
+      if (firestoreUnsubRef.current) {
+        firestoreUnsubRef.current();
+        firestoreUnsubRef.current = null;
+      }
       await fbSignOut(auth);
-    } catch (e) {
-      console.warn('Firebase signout error:', e);
-    }
+    } catch {}
     setUser(null);
     localStorage.removeItem('ytify_current_user');
     setUserData(defaultUserData);
-    sessionStorage.clear();
-    // Signal App.tsx to immediately halt music and reset player
-    window.dispatchEvent(new CustomEvent('ytify_signout'));
   };
 
   const toggleLike = async (song: Song) => {
-    const exists = userData.likedSongs.some(s => s.videoId === song.videoId);
-    const updatedLiked = exists 
+    const isAlreadyLiked = userData.likedSongs.some(s => s.videoId === song.videoId);
+    const updatedLiked = isAlreadyLiked
       ? userData.likedSongs.filter(s => s.videoId !== song.videoId)
       : [song, ...userData.likedSongs];
 
@@ -401,6 +374,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistUserData(updatedData, user);
   };
 
+  const activateAccountPremium = async (utr: string) => {
+    if (!user || user.isGuest) {
+      throw new Error('Please sign in with Google to link your 2-month Premium subscription.');
+    }
+    const twoMonthsMs = 60 * 24 * 60 * 60 * 1000;
+    const expiresAt = Date.now() + twoMonthsMs;
+    const updated: UserData = {
+      ...userData,
+      premiumExpiresAt: expiresAt,
+      premiumUtr: utr
+    };
+    persistUserData(updated, user);
+
+    try {
+      const subRef = doc(db, 'premium_subscriptions', utr);
+      await setDoc(subRef, {
+        utr,
+        userId: user.uid,
+        userEmail: user.email || '',
+        userName: user.name || 'User',
+        amount: 10,
+        plan: '2_months',
+        upiId: '8902281688@mbk',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(expiresAt).toISOString(),
+        status: 'active'
+      }, { merge: true });
+    } catch (e) {
+      console.warn('Subscription ledger error:', e);
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -420,7 +425,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       removeSongFromPlaylist,
       addSearchHistory,
       removeSearchHistory,
-      clearSearchHistory
+      clearSearchHistory,
+      activateAccountPremium
     }}>
       {children}
     </AuthContext.Provider>
