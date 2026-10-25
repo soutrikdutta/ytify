@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { 
   auth, 
   googleProvider, 
@@ -9,8 +9,8 @@ import {
   onAuthStateChanged,
   db, 
   doc, 
-  getDoc, 
-  setDoc 
+  setDoc,
+  onSnapshot
 } from '../firebase';
 import type { Song } from '../types';
 
@@ -23,6 +23,7 @@ export interface UserPreferences {
 export interface UserData {
   likedSongs: Song[];
   history: Song[];
+  searchHistory?: string[];
   playlists: { id: string; name: string; songs: Song[] }[];
   preferences?: UserPreferences;
 }
@@ -51,12 +52,17 @@ interface AuthContextType {
   deletePlaylist: (id: string) => Promise<void>;
   addSongToPlaylist: (playlistId: string, song: Song) => Promise<void>;
   removeSongFromPlaylist: (playlistId: string, videoId: string) => Promise<void>;
+  addSearchHistory: (term: string) => Promise<void>;
+  removeSearchHistory: (term: string) => Promise<void>;
+  clearSearchHistory: () => Promise<void>;
 }
 
 const defaultUserData: UserData = {
   likedSongs: [],
   history: [],
-  playlists: []
+  searchHistory: [],
+  playlists: [],
+  preferences: { artists: [], genres: [], languages: [] }
 };
 
 const getInitialUserData = (): UserData => {
@@ -85,8 +91,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [userData, setUserData] = useState<UserData>(getInitialUserData);
   const [loading, setLoading] = useState(false);
+  const firestoreUnsubRef = useRef<(() => void) | null>(null);
 
-  // Helper to persist data strictly for the active user account
+  // Helper to persist data strictly for the active user account in Firestore & LocalCache
   const persistUserData = (updated: UserData, targetUser: UserProfile | null) => {
     setUserData(updated);
     const targetUid = targetUser?.uid || 'guest_session';
@@ -94,7 +101,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem(`ytify_data_${targetUid}`, JSON.stringify(updated));
       if (targetUser && !targetUser.isGuest) {
         const userRef = doc(db, 'users', targetUser.uid);
-        setDoc(userRef, updated, { merge: true }).catch(() => {});
+        setDoc(userRef, updated, { merge: true }).catch((err) => {
+          console.warn('Firestore write sync error:', err);
+        });
       }
     } catch (e) {
       console.warn('Storage sync error:', e);
@@ -121,9 +130,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
   }, []);
 
-  // Listen to Firebase Auth state (Loads strict per-account data from Firestore & LocalCache)
+  // Listen to Firebase Auth state with REAL-TIME MULTI-DEVICE FIRESTORE SYNC
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      // Clean up previous real-time listener if switching accounts
+      if (firestoreUnsubRef.current) {
+        firestoreUnsubRef.current();
+        firestoreUnsubRef.current = null;
+      }
+
       if (currentUser) {
         const profile: UserProfile = {
           uid: currentUser.uid,
@@ -134,7 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(profile);
         localStorage.setItem('ytify_current_user', JSON.stringify(profile));
 
-        // 1. Immediately switch to this specific account's cache if available
+        // 1. Immediately switch to this specific account's cache for 0ms startup
         const localAccountCache = localStorage.getItem(`ytify_data_${currentUser.uid}`);
         if (localAccountCache) {
           try {
@@ -146,33 +161,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUserData(defaultUserData);
         }
 
-        // 2. Fetch fresh account-specific data from Firestore (NO cross-account merging)
+        // 2. Attach live real-time Firestore listener: any device update syncs instantly
         try {
           const userRef = doc(db, 'users', currentUser.uid);
-          const snap = await getDoc(userRef);
-          if (snap.exists()) {
-            const remoteData = snap.data() as UserData;
-            const accountData: UserData = {
-              likedSongs: remoteData.likedSongs || [],
-              history: remoteData.history || [],
-              playlists: remoteData.playlists || [],
-              preferences: remoteData.preferences
-            };
-            setUserData(accountData);
-            localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(accountData));
-          } else {
-            // Brand new Google account: start clean and write empty initial profile
-            const freshData: UserData = {
-              likedSongs: [],
-              history: [],
-              playlists: []
-            };
-            setUserData(freshData);
-            localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(freshData));
-            await setDoc(userRef, freshData).catch(() => {});
-          }
+          firestoreUnsubRef.current = onSnapshot(userRef, (docSnap) => {
+            if (docSnap.exists()) {
+              const remote = docSnap.data() as UserData;
+              const accountData: UserData = {
+                likedSongs: remote.likedSongs || [],
+                history: remote.history || [],
+                searchHistory: remote.searchHistory || [],
+                playlists: remote.playlists || [],
+                preferences: remote.preferences || { artists: [], genres: [], languages: [] }
+              };
+              setUserData(accountData);
+              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(accountData));
+            } else {
+              // Brand new Google account: initialize their clean profile document in Firestore
+              const freshData: UserData = {
+                likedSongs: [],
+                history: [],
+                searchHistory: [],
+                playlists: [],
+                preferences: { artists: [], genres: [], languages: [] }
+              };
+              setUserData(freshData);
+              localStorage.setItem(`ytify_data_${currentUser.uid}`, JSON.stringify(freshData));
+              setDoc(userRef, freshData).catch((err) => console.warn('Init firestore doc err:', err));
+            }
+          }, (err) => {
+            console.warn('Firestore live listener error:', err);
+          });
         } catch (err) {
-          console.warn('Firestore offline notice:', err);
+          console.warn('Firestore listener setup notice:', err);
         }
       } else {
         const localUser = localStorage.getItem('ytify_current_user');
@@ -184,7 +205,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (firestoreUnsubRef.current) {
+        firestoreUnsubRef.current();
+        firestoreUnsubRef.current = null;
+      }
+    };
   }, []);
 
   // Real Google Sign-In with Firebase
@@ -353,6 +380,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistUserData(updated, user);
   };
 
+  const addSearchHistory = async (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    const current = userData.searchHistory || [];
+    const updated = [trimmed, ...current.filter(i => i.toLowerCase() !== trimmed.toLowerCase())].slice(0, 20);
+    const updatedData: UserData = { ...userData, searchHistory: updated };
+    persistUserData(updatedData, user);
+  };
+
+  const removeSearchHistory = async (term: string) => {
+    const current = userData.searchHistory || [];
+    const updated = current.filter(i => i !== term);
+    const updatedData: UserData = { ...userData, searchHistory: updated };
+    persistUserData(updatedData, user);
+  };
+
+  const clearSearchHistory = async () => {
+    const updatedData: UserData = { ...userData, searchHistory: [] };
+    persistUserData(updatedData, user);
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -369,7 +417,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       createPlaylist,
       deletePlaylist,
       addSongToPlaylist,
-      removeSongFromPlaylist
+      removeSongFromPlaylist,
+      addSearchHistory,
+      removeSearchHistory,
+      clearSearchHistory
     }}>
       {children}
     </AuthContext.Provider>

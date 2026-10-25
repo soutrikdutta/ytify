@@ -22,10 +22,11 @@ export const Home: React.FC<HomeProps> = ({
   const { user, userData } = useAuth();
   const [activeMood, setActiveMood] = useState('All');
 
+  const accountUid = user?.uid || 'guest';
   const userArtists = userData.preferences?.artists || [];
-  const getCacheKey = (mood: string, artists: string[]) => `ytify_feed_cached_${artists.join('_')}_${mood}`;
+  const getCacheKey = (mood: string, artists: string[]) => `ytify_feed_${accountUid}_${mood}_${artists.join('_') || 'default'}`;
 
-  // Persistent feed state loaded instantly from cache with 0ms delay
+  // Persistent feed state loaded strictly per Google Account
   const [sections, setSections] = useState<ExploreSection[]>(() => {
     try {
       const cached = localStorage.getItem(getCacheKey('All', userArtists));
@@ -44,15 +45,8 @@ export const Home: React.FC<HomeProps> = ({
     }
   });
 
-  // Persistent search recommendations shelf loaded instantly from cache
-  const [recentSearchSongs, setRecentSearchSongs] = useState<{ query: string; items: Song[] } | null>(() => {
-    try {
-      const saved = localStorage.getItem('ytify_cached_search_shelf');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Account-scoped search recommendations shelf (derived from Google Account search history in Firestore)
+  const [recentSearchSongs, setRecentSearchSongs] = useState<{ query: string; items: Song[] } | null>(null);
 
   const moods = [
     { label: 'All', icon: Sparkles },
@@ -68,47 +62,53 @@ export const Home: React.FC<HomeProps> = ({
     { label: 'Workout', icon: Flame }
   ];
 
-  // Fetch recent search recommendations without causing layout shifts
+  // Fetch search recommendations strictly linked to the active Google account's searches
   const loadRecentSearchShelf = async () => {
     try {
-      const historyStr = localStorage.getItem('ytify_search_history');
-      if (historyStr) {
-        const history: string[] = JSON.parse(historyStr);
-        if (history.length > 0) {
-          const latest = history[0];
-          // If already cached for this exact query, keep it stable
-          if (recentSearchSongs && recentSearchSongs.query.toLowerCase() === latest.toLowerCase()) {
-            return;
-          }
-          const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(latest)}`));
-          const data = await res.json();
-          if (data && data.songs && data.songs.length > 0) {
-            const shelfObj = {
-              query: latest,
-              items: data.songs.slice(0, 8)
-            };
-            setRecentSearchSongs(shelfObj);
-            try {
-              localStorage.setItem('ytify_cached_search_shelf', JSON.stringify(shelfObj));
-            } catch {}
-          }
-        }
+      const history = userData.searchHistory || [];
+      if (history.length === 0) {
+        setRecentSearchSongs(null);
+        return;
+      }
+      const latest = history[0];
+      if (recentSearchSongs && recentSearchSongs.query.toLowerCase() === latest.toLowerCase()) {
+        return;
+      }
+      const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(latest)}`));
+      const data = await res.json();
+      if (data && data.songs && data.songs.length > 0) {
+        setRecentSearchSongs({
+          query: latest,
+          items: data.songs.slice(0, 8)
+        });
       }
     } catch (e) {
       console.warn('Recent search shelf notice:', e);
     }
   };
 
+  // Re-load search recommendations whenever the Google account search history updates
   useEffect(() => {
     loadRecentSearchShelf();
-    const handleSearchDone = () => loadRecentSearchShelf();
-    window.addEventListener('ytify_search_performed', handleSearchDone);
-    return () => window.removeEventListener('ytify_search_performed', handleSearchDone);
-  }, []);
+  }, [userData.searchHistory, user?.uid]);
 
+  // When switching accounts, immediately clear prior recommendations and fetch new account feed
   useEffect(() => {
+    const cached = localStorage.getItem(getCacheKey(activeMood, userArtists));
+    if (cached) {
+      try {
+        setSections(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        setSections([]);
+        setLoading(true);
+      }
+    } else {
+      setSections([]);
+      setLoading(true);
+    }
     fetchFeed();
-  }, [activeMood, userData.preferences]);
+  }, [user?.uid, activeMood, userData.preferences]);
 
   const fetchFeed = async () => {
     const cacheKey = getCacheKey(activeMood, userArtists);

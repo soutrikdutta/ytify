@@ -29,7 +29,15 @@ interface SearchProps {
 }
 
 export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlaying = false }) => {
-  const { toggleLike, isLiked, userData, addSongToPlaylist } = useAuth();
+  const { 
+    toggleLike, 
+    isLiked, 
+    userData, 
+    addSongToPlaylist,
+    addSearchHistory,
+    removeSearchHistory,
+    clearSearchHistory: clearGlobalSearchHistory
+  } = useAuth();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,15 +52,8 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
     }, 2800);
   };
 
-  // Search History state
-  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('ytify_search_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Google Account Synced Search History (stored in Firestore per account)
+  const searchHistory = userData.searchHistory || [];
 
   // Real-time YouTube / Google Autocomplete Suggestions state
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -139,32 +140,17 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
   const addToHistory = (term: string) => {
     const trimmed = term.trim();
     if (!trimmed) return;
-    setSearchHistory((prev) => {
-      const updated = [trimmed, ...prev.filter((item) => item.toLowerCase() !== trimmed.toLowerCase())].slice(0, 10);
-      try {
-        localStorage.setItem('ytify_search_history', JSON.stringify(updated));
-      } catch {}
-      window.dispatchEvent(new CustomEvent('ytify_search_performed', { detail: trimmed }));
-      return updated;
-    });
+    addSearchHistory(trimmed);
+    window.dispatchEvent(new CustomEvent('ytify_search_performed', { detail: trimmed }));
   };
 
   const removeHistoryItem = (e: React.MouseEvent, item: string) => {
     e.stopPropagation();
-    setSearchHistory((prev) => {
-      const updated = prev.filter((i) => i !== item);
-      try {
-        localStorage.setItem('ytify_search_history', JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
+    removeSearchHistory(item);
   };
 
   const clearSearchHistory = () => {
-    setSearchHistory([]);
-    try {
-      localStorage.removeItem('ytify_search_history');
-    } catch {}
+    clearGlobalSearchHistory();
   };
 
   const handleSearch = async (e?: React.FormEvent, customQuery?: string) => {

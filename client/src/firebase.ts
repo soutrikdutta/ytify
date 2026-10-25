@@ -16,7 +16,8 @@ import {
   setDoc, 
   updateDoc, 
   arrayUnion, 
-  arrayRemove 
+  arrayRemove,
+  onSnapshot
 } from 'firebase/firestore';
 
 // Official Config from your Firebase Project 'ytify-c18ed'
@@ -52,5 +53,6 @@ export {
   setDoc, 
   updateDoc, 
   arrayUnion, 
-  arrayRemove 
+  arrayRemove,
+  onSnapshot 
 };
