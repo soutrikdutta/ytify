@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { Song } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { apiUrl } from '../api';
@@ -795,10 +796,17 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
                         </div>
 
                         <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10">
-                          <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 pointer-events-none">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPlaylistModal(pl);
+                            }}
+                            className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
+                          >
                             <span>Open playlist</span>
                             <ChevronRight size={13} />
-                          </span>
+                          </button>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -896,14 +904,14 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
       )}
 
       {/* Real YouTube Playlist Detail Modal */}
-      {selectedPlaylist && (
+      {selectedPlaylist && createPortal(
         <div 
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex flex-col justify-end md:justify-center items-center p-0 md:p-6 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-xl flex flex-col justify-end md:justify-center items-center p-0 md:p-6 animate-in fade-in duration-200"
           onClick={() => setSelectedPlaylist(null)}
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl max-h-[92vh] md:max-h-[85vh] bg-[#090b10] border border-white/15 rounded-t-3xl md:rounded-3xl flex flex-col overflow-hidden shadow-[0_25px_80px_rgba(0,0,0,0.95)] animate-in slide-in-from-bottom-6 duration-300"
+            className="w-full max-w-4xl h-[88vh] md:h-[84vh] bg-[#090b10] border border-white/15 rounded-t-3xl md:rounded-3xl flex flex-col overflow-hidden shadow-[0_25px_80px_rgba(0,0,0,0.95)] animate-in slide-in-from-bottom-6 duration-300 relative"
           >
             {/* Playlist Header / Hero */}
             <div className="relative p-5 sm:p-7 border-b border-white/10 bg-gradient-to-b from-emerald-950/40 via-white/5 to-transparent flex-shrink-0">
@@ -1086,13 +1094,14 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Add To Playlist Modal */}
-      {songToAddToPlaylist && (
+      {songToAddToPlaylist && createPortal(
         <div 
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[130] bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200"
           onClick={() => setSongToAddToPlaylist(null)}
         >
           <div 
@@ -1167,7 +1176,8 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Floating Animated Toast */}

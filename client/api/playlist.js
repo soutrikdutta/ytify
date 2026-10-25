@@ -58,11 +58,36 @@ export default async function handler(req, res) {
                   header?.heroDetails?.imageBannerViewModel?.image?.sources?.slice(-1)[0]?.url ||
                   `https://i.ytimg.com/vi/${playlistId}/hqdefault.jpg`;
 
-    let rawItems = json.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
+    // Deep extractor to collect all video/track items regardless of YouTube nesting
+    const extractItems = (obj, collected = [], seen = new Set()) => {
+      if (!obj || typeof obj !== 'object') return collected;
+      if (obj.lockupViewModel && obj.lockupViewModel.contentId && obj.lockupViewModel.contentId.length === 11) {
+        if (!seen.has(obj.lockupViewModel.contentId)) {
+          seen.add(obj.lockupViewModel.contentId);
+          collected.push({ lockupViewModel: obj.lockupViewModel });
+        }
+        return collected;
+      }
+      if (obj.playlistVideoRenderer && obj.playlistVideoRenderer.videoId && obj.playlistVideoRenderer.videoId.length === 11) {
+        if (!seen.has(obj.playlistVideoRenderer.videoId)) {
+          seen.add(obj.playlistVideoRenderer.videoId);
+          collected.push({ playlistVideoRenderer: obj.playlistVideoRenderer });
+        }
+        return collected;
+      }
+      if (Array.isArray(obj)) {
+        for (const el of obj) extractItems(el, collected, seen);
+      } else {
+        for (const k of Object.keys(obj)) {
+          if (k !== 'responseContext' && k !== 'frameworkUpdates' && k !== 'topbar') {
+            extractItems(obj[k], collected, seen);
+          }
+        }
+      }
+      return collected;
+    };
 
-    if (rawItems.length === 1 && rawItems[0]?.playlistVideoListRenderer?.contents) {
-      rawItems = rawItems[0].playlistVideoListRenderer.contents;
-    }
+    const rawItems = extractItems(json.contents);
 
     const songs = [];
     for (const it of rawItems) {
