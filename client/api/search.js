@@ -59,6 +59,22 @@ export default async function handler(req, res) {
               v.thumbnail?.thumbnails?.slice(-1)[0]?.url ||
               `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
 
+            const isLongMix = () => {
+              if (!duration) return false;
+              const parts = duration.split(':');
+              return parts.length > 2 || parseInt(parts[0], 10) > 10;
+            };
+
+            const isExplicitLongSearch = query.toLowerCase().includes('mix') || 
+                                          query.toLowerCase().includes('podcast') || 
+                                          query.toLowerCase().includes('album') || 
+                                          query.toLowerCase().includes('setlist');
+
+            // If user did not specifically search for a mix/podcast/album, skip multi-hour compilations
+            if (isLongMix() && !isExplicitLongSearch) {
+              continue;
+            }
+
             songs.push({
               type: 'SONG',
               videoId: v.videoId,

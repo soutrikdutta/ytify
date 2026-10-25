@@ -241,12 +241,17 @@ function MainApp() {
               playsinline: 1,
               rel: 0,
               enablejsapi: 1,
-              origin: window.location.origin
+              origin: window.location.origin,
+              widget_referrer: window.location.href
             },
             events: {
               onReady: () => {
                 isPlayerReadyRef.current = true;
                 try {
+                  const iframe = document.querySelector('#yt-audio-player') as HTMLIFrameElement;
+                  if (iframe) {
+                    iframe.setAttribute('allow', 'autoplay; encrypted-media; gyroscope; picture-in-picture');
+                  }
                   ytPlayerRef.current.unMute?.();
                   ytPlayerRef.current.setVolume?.(volume || 100);
                 } catch {}
@@ -256,7 +261,12 @@ function MainApp() {
                   try {
                     ytPlayerRef.current.unMute?.();
                     ytPlayerRef.current.setVolume?.(volume || 100);
-                    ytPlayerRef.current.loadVideoById(s.videoId);
+                    ytPlayerRef.current.loadVideoById({
+                      videoId: s.videoId,
+                      startSeconds: 0,
+                      suggestedQuality: 'small'
+                    });
+                    ytPlayerRef.current.unMute?.();
                     ytPlayerRef.current.playVideo?.();
                     setIsPlaying(true);
                   } catch (e) {
@@ -265,12 +275,18 @@ function MainApp() {
                 }
               },
               onStateChange: (event: any) => {
-                if (event.data === 1) {
-                  setIsPlaying(true);
+                // States: -1 (unstarted), 1 (playing), 2 (paused), 3 (buffering), 5 (cued)
+                if (event.data === 1 || event.data === 3 || event.data === 5 || event.data === -1) {
                   try {
                     ytPlayerRef.current?.unMute?.();
                     ytPlayerRef.current?.setVolume?.(volume || 100);
+                    if (ytPlayerRef.current?.isMuted && ytPlayerRef.current.isMuted()) {
+                      ytPlayerRef.current.unMute();
+                    }
                   } catch (e) {}
+                }
+                if (event.data === 1) {
+                  setIsPlaying(true);
                   if (ytPlayerRef.current?.getDuration) {
                     setDuration(ytPlayerRef.current.getDuration() || 0);
                   }
@@ -295,7 +311,11 @@ function MainApp() {
                       if (alt && alt.videoId) {
                         console.log('Switching to non-restricted audio version:', alt.videoId);
                         if (ytPlayerRef.current?.loadVideoById) {
-                          ytPlayerRef.current.loadVideoById({ videoId: alt.videoId, startSeconds: 0 });
+                          ytPlayerRef.current.loadVideoById({
+                            videoId: alt.videoId,
+                            startSeconds: 0,
+                            suggestedQuality: 'small'
+                          });
                           ytPlayerRef.current.unMute?.();
                           ytPlayerRef.current.playVideo?.();
                           setIsPlaying(true);
@@ -404,7 +424,11 @@ function MainApp() {
         try {
           ytPlayerRef.current.unMute?.();
           ytPlayerRef.current.setVolume?.(volume || 100);
-          ytPlayerRef.current.loadVideoById(vid);
+          ytPlayerRef.current.loadVideoById({
+            videoId: vid,
+            startSeconds: 0,
+            suggestedQuality: 'small'
+          });
           ytPlayerRef.current.unMute?.();
           ytPlayerRef.current.playVideo?.();
           setIsPlaying(true);
@@ -423,7 +447,11 @@ function MainApp() {
           try {
             ytPlayerRef.current.unMute?.();
             ytPlayerRef.current.setVolume?.(volume || 100);
-            ytPlayerRef.current.loadVideoById(vid);
+            ytPlayerRef.current.loadVideoById({
+              videoId: vid,
+              startSeconds: 0,
+              suggestedQuality: 'small'
+            });
             ytPlayerRef.current.unMute?.();
             ytPlayerRef.current.playVideo?.();
             setIsPlaying(true);
@@ -431,10 +459,10 @@ function MainApp() {
           } catch (e) {
             console.warn('Deferred playback error:', e);
           }
-        } else if (attempts > 30) {
+        } else if (attempts > 60) {
           clearInterval(pollTimer);
         }
-      }, 100);
+      }, 80);
     };
 
     // If already a valid 11-character YouTube videoId, play immediately
@@ -516,15 +544,15 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-[#030307] text-white flex flex-col font-sans selection:bg-[#15803d] selection:text-white relative overflow-hidden">
-      {/* Active YouTube Audio/Media Engine Element */}
+      {/* Active YouTube Audio/Media Engine Element (Rendered at opacity 1 behind dark canvas to satisfy Chrome autoplay & audio background scheduling) */}
       <div
         id="yt-audio-player-container"
-        className="fixed bottom-0 right-0 pointer-events-none select-none"
+        className="fixed bottom-0 right-0 pointer-events-none select-none overflow-hidden"
         style={{
           width: 320,
           height: 240,
-          opacity: 0.05,
-          zIndex: 0
+          opacity: 1,
+          zIndex: -20
         }}
       >
         <div id="yt-audio-player" className="w-full h-full" />
