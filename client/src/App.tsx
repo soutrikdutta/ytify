@@ -105,6 +105,7 @@ function MainApp() {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [showProfileModal, showTasteModal, showAuthModal, currentTab]);
+
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -113,6 +114,10 @@ function MainApp() {
   const [queue, setQueue] = useState<Song[]>([]);
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [autoExpandPlayer, setAutoExpandPlayer] = useState(false);
+  const [isShuffle, setIsShuffle] = useState(false);
+  const originalQueueRef = useRef<Song[]>([]);
+  const isFetchingRelatedRef = useRef<boolean>(false);
+  const lastFetchedRelatedForRef = useRef<string>('');
 
   // YouTube Iframe Player Engine (Official, 100% reliable Google engine)
   const ytPlayerRef = useRef<any>(null);
@@ -132,118 +137,67 @@ function MainApp() {
       setIsPlaying(false);
       setCurrentSong(null);
       currentSongRef.current = null;
-      setCurrentTime(0);
       setQueue([]);
+      originalQueueRef.current = [];
       setQueueIndex(-1);
+      setCurrentTime(0);
+      setDuration(0);
     };
-
-    window.addEventListener('ytify_signout', handleResetAudio);
 
     if (prevUserUidRef.current !== undefined && prevUserUidRef.current !== user?.uid) {
       handleResetAudio();
     }
     prevUserUidRef.current = user?.uid;
 
+    window.addEventListener('ytify_reset_audio_state', handleResetAudio);
     return () => {
-      window.removeEventListener('ytify_signout', handleResetAudio);
+      window.removeEventListener('ytify_reset_audio_state', handleResetAudio);
     };
-  }, [user?.uid]);
+  }, [user]);
 
-  // Dolby Atmos Live State
+  // Dolby Atmos Engine Local State for Visual Equalizer Bars
   const [dolbyEnabled, setDolbyEnabled] = useState(() => {
-    const s = localStorage.getItem('ytify_dolby_enabled');
-    return s !== null ? s === 'true' : true;
+    const saved = localStorage.getItem('ytify_dolby_enabled');
+    return saved !== null ? saved === 'true' : true;
   });
-  const [dolbyProfile, setDolbyProfile] = useState(() => {
-    return localStorage.getItem('ytify_dolby_profile') || 'music';
+  const [dolbyProfile, setDolbyProfile] = useState<'dynamic' | 'movie' | 'music' | 'voice'>(() => {
+    return (localStorage.getItem('ytify_dolby_profile') as any) || 'music';
   });
 
-  // Listen to Dolby Atmos changes from Settings
   useEffect(() => {
     const handleDolbyUpdate = () => {
-      const s = localStorage.getItem('ytify_dolby_enabled');
-      setDolbyEnabled(s !== null ? s === 'true' : true);
-      setDolbyProfile(localStorage.getItem('ytify_dolby_profile') || 'music');
+      const savedEnabled = localStorage.getItem('ytify_dolby_enabled');
+      const savedProfile = localStorage.getItem('ytify_dolby_profile');
+      if (savedEnabled !== null) setDolbyEnabled(savedEnabled === 'true');
+      if (savedProfile) setDolbyProfile(savedProfile as any);
     };
     window.addEventListener('ytify_dolby_updated', handleDolbyUpdate);
-  return () => window.removeEventListener('ytify_dolby_updated', handleDolbyUpdate);
+    return () => window.removeEventListener('ytify_dolby_updated', handleDolbyUpdate);
   }, []);
 
-  // Shared Link Receiver: /?v=<videoId>&play=1 -> loads, plays & opens full screen player
+  // Initialize YouTube Iframe API once
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const sharedVid = params.get('v');
-      const shouldPlay = params.get('play');
-      if (sharedVid && sharedVid.length === 11) {
-        fetch(apiUrl(`/api/search?q=${encodeURIComponent(sharedVid)}`))
-          .then(r => r.json())
-          .then(data => {
-            const track = data.songs?.[0] || {
-              type: 'SONG',
-              videoId: sharedVid,
-              name: 'Shared Track',
-              artist: { name: 'ytify' },
-              thumbnails: [{ url: `https://i.ytimg.com/vi/${sharedVid}/hqdefault.jpg` }]
-            };
-            handlePlaySong(track);
-            if (shouldPlay === '1') {
-              setAutoExpandPlayer(true);
-            }
-          })
-          .catch(() => {
-            const fallbackSong: Song = {
-              videoId: sharedVid,
-              name: 'Shared Track',
-              artist: { name: 'ytify' },
-              thumbnails: [{ url: `https://i.ytimg.com/vi/${sharedVid}/hqdefault.jpg` }]
-            };
-            handlePlaySong(fallbackSong);
-            if (shouldPlay === '1') {
-              setAutoExpandPlayer(true);
-            }
-          });
-      }
-    } catch (e) {
-      console.warn('Shared link error:', e);
-    }
-  }, []);
-
-  const handleShuffleQueue = () => {
-    if (queue.length <= 1) return;
-    setQueue(prev => {
-      if (!currentSong) return prev;
-      const current = prev.find(s => s.videoId === currentSong.videoId) || currentSong;
-      const others = prev.filter(s => s.videoId !== currentSong.videoId);
-      for (let i = others.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [others[i], others[j]] = [others[j], others[i]];
-      }
-      return [current, ...others];
-    });
-    setQueueIndex(0);
-  };
-
-  // Initialize YouTube Iframe Engine (Enhanced for 100% Instant Desktop & Mobile Web Playback)
-  const initPlayer = () => {
-    const el = document.getElementById('yt-audio-player');
-    if (!el || ytPlayerRef.current) return;
-
-    if (!window.YT) {
-      if (!document.getElementById('yt-iframe-api-tag')) {
+    const initYT = () => {
+      if (window.YT && window.YT.Player) {
+        createPlayer();
+      } else {
         const tag = document.createElement('script');
-        tag.id = 'yt-iframe-api-tag';
         tag.src = 'https://www.youtube.com/iframe_api';
-        document.head.appendChild(tag);
-      }
-      return;
-    }
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
 
-    if (window.YT && window.YT.Player && !ytPlayerRef.current) {
+        window.onYouTubeIframeAPIReady = () => {
+          createPlayer();
+        };
+      }
+    };
+
+    const createPlayer = () => {
+      if (ytPlayerRef.current) return;
       try {
-        ytPlayerRef.current = new window.YT.Player('yt-audio-player', {
-          height: '100%',
-          width: '100%',
+        ytPlayerRef.current = new window.YT.Player('yt-hidden-player', {
+          height: '1',
+          width: '1',
           playerVars: {
             autoplay: 1,
             controls: 0,
@@ -252,512 +206,618 @@ function MainApp() {
             modestbranding: 1,
             playsinline: 1,
             rel: 0,
-            enablejsapi: 1,
-            origin: window.location.origin,
-            widget_referrer: window.location.href
+            origin: window.location.origin
           },
           events: {
-            onReady: () => {
+            onReady: (event: any) => {
               isPlayerReadyRef.current = true;
-              try {
-                const iframe = document.querySelector('#yt-audio-player') as HTMLIFrameElement;
-                if (iframe) {
-                  iframe.setAttribute('allow', 'autoplay; encrypted-media; gyroscope; picture-in-picture');
-                }
-                ytPlayerRef.current.unMute?.();
-                ytPlayerRef.current.setVolume?.(volume || 100);
-              } catch {}
+              event.target.setVolume(volume);
               if (pendingSongRef.current) {
                 const s = pendingSongRef.current;
                 pendingSongRef.current = null;
-                try {
-                  ytPlayerRef.current.unMute?.();
-                  ytPlayerRef.current.setVolume?.(volume || 100);
-                  ytPlayerRef.current.loadVideoById({
-                    videoId: s.videoId,
-                    startSeconds: 0,
-                    suggestedQuality: 'small'
-                  });
-                  ytPlayerRef.current.unMute?.();
-                  ytPlayerRef.current.playVideo?.();
-                  setIsPlaying(true);
-                } catch (e) {
-                  console.error('onReady play error:', e);
-                }
+                playSongOnPlayer(s);
               }
             },
             onStateChange: (event: any) => {
-              // States: -1 (unstarted), 1 (playing), 2 (paused), 3 (buffering), 5 (cued)
-              if (event.data === 1 || event.data === 3 || event.data === 5 || event.data === -1) {
-                try {
-                  ytPlayerRef.current?.unMute?.();
-                  ytPlayerRef.current?.setVolume?.(volume || 100);
-                  if (ytPlayerRef.current?.isMuted && ytPlayerRef.current.isMuted()) {
-                    ytPlayerRef.current.unMute();
-                  }
-                } catch (e) {}
-              }
+              // 1: PLAYING, 2: PAUSED, 0: ENDED, 3: BUFFERING
               if (event.data === 1) {
                 setIsPlaying(true);
-                if (ytPlayerRef.current?.getDuration) {
-                  setDuration(ytPlayerRef.current.getDuration() || 0);
+                const d = ytPlayerRef.current.getDuration();
+                if (d && !isNaN(d) && d > 0) {
+                  setDuration(d);
                 }
               } else if (event.data === 2) {
                 setIsPlaying(false);
               } else if (event.data === 0) {
+                // Song ended naturally - proceed to next or automatically fetch related songs
                 handleNext();
               }
             },
-            onError: async (event: any) => {
+            onError: (event: any) => {
               console.warn('YouTube Player error code:', event.data);
-              // Errors 150 / 101 (embed restricted on 3rd party domain), 100 (private/removed), 2 (invalid id)
-              if (event.data === 150 || event.data === 101 || event.data === 100 || event.data === 2) {
-                const s = currentSongRef.current;
-                if (s && !(s as any)._triedAlt) {
-                  (s as any)._triedAlt = true;
-                  try {
-                    const artist = typeof s.artist === 'string' ? s.artist : s.artist?.name || '';
-                    const altRes = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(s.name + ' ' + artist + ' audio')}`));
-                    const altData = await altRes.json();
-                    const alt = altData.songs?.find((item: Song) => item.videoId && item.videoId !== s.videoId && item.videoId.length === 11);
-                    if (alt && alt.videoId) {
-                      console.log('Switching to non-restricted audio version:', alt.videoId);
-                      if (ytPlayerRef.current?.loadVideoById) {
-                        ytPlayerRef.current.loadVideoById({
-                          videoId: alt.videoId,
-                          startSeconds: 0,
-                          suggestedQuality: 'small'
-                        });
-                        ytPlayerRef.current.unMute?.();
-                        ytPlayerRef.current.playVideo?.();
-                        setIsPlaying(true);
-                        return;
-                      }
-                    }
-                  } catch (e) {
-                    console.warn('Alternative search error:', e);
-                  }
-                }
+              // Auto skip unplayable track after short delay
+              setTimeout(() => {
                 handleNext();
-              }
+              }, 1200);
             }
           }
         });
-      } catch (e) {
-        console.warn('YT player init error:', e);
+      } catch (err) {
+        console.warn('Failed to initialize YouTube Iframe player:', err);
       }
-    }
-  };
+    };
 
-  useEffect(() => {
-    initPlayer();
-    if (window.YT && typeof (window.YT as any).ready === 'function') {
-      (window.YT as any).ready(initPlayer);
-    }
-    window.onYouTubeIframeAPIReady = initPlayer;
-
-    // Polling failsafe to guarantee player initializes immediately on initial load
-    const checkTimer = setInterval(() => {
-      if (!ytPlayerRef.current) {
-        initPlayer();
-      } else {
-        clearInterval(checkTimer);
-      }
-    }, 100);
-    const stopTimer = setTimeout(() => clearInterval(checkTimer), 15000);
+    initYT();
 
     return () => {
-      clearInterval(checkTimer);
-      clearTimeout(stopTimer);
+      try {
+        if (ytPlayerRef.current && ytPlayerRef.current.destroy) {
+          ytPlayerRef.current.destroy();
+          ytPlayerRef.current = null;
+          isPlayerReadyRef.current = false;
+        }
+      } catch {}
     };
   }, []);
 
-  // Global user gesture audio unblocker: un-mutes and restores volume on user click/interaction
+  // Sync volume with YouTube player
   useEffect(() => {
-    const unlockSound = () => {
-      if (ytPlayerRef.current) {
-        try {
-          ytPlayerRef.current.unMute?.();
-          ytPlayerRef.current.setVolume?.(volume || 100);
-        } catch {}
-      }
-    };
-    window.addEventListener('click', unlockSound, { passive: true });
-    window.addEventListener('keydown', unlockSound, { passive: true });
-    return () => {
-      window.removeEventListener('click', unlockSound);
-      window.removeEventListener('keydown', unlockSound);
-    };
+    if (ytPlayerRef.current && isPlayerReadyRef.current && ytPlayerRef.current.setVolume) {
+      try {
+        ytPlayerRef.current.setVolume(volume);
+      } catch {}
+    }
   }, [volume]);
 
-  // Progress time loop for YouTube Player
+  // Polling playback time from YouTube player
   useEffect(() => {
     let interval: any = null;
     if (isPlaying) {
       interval = setInterval(() => {
-        if (ytPlayerRef.current && ytPlayerRef.current.getCurrentTime) {
-          const t = ytPlayerRef.current.getCurrentTime();
-          const d = ytPlayerRef.current.getDuration();
-          if (t && !isNaN(t)) setCurrentTime(t);
-          if (d && !isNaN(d)) setDuration(d);
+        if (ytPlayerRef.current && isPlayerReadyRef.current) {
+          try {
+            const time = ytPlayerRef.current.getCurrentTime();
+            const dur = ytPlayerRef.current.getDuration();
+            if (typeof time === 'number' && !isNaN(time)) {
+              setCurrentTime(time);
+            }
+            if (typeof dur === 'number' && !isNaN(dur) && dur > 0) {
+              setDuration(dur);
+            }
+          } catch {}
         }
-      }, 200);
+      }, 500);
     }
-  return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isPlaying]);
 
-
-
-  // Prompt YouTube Music Taste Onboarding only once ever across sessions
-  useEffect(() => {
+  // Continuous Playback: Automatically fetch and append related songs when queue is ending
+  const fetchRelatedSongs = async (videoId: string): Promise<Song[]> => {
+    if (!videoId || isFetchingRelatedRef.current || lastFetchedRelatedForRef.current === videoId) {
+      return [];
+    }
+    isFetchingRelatedRef.current = true;
+    lastFetchedRelatedForRef.current = videoId;
     try {
-      const hasCompletedTaste = localStorage.getItem('ytify_taste_completed');
-      if (!hasCompletedTaste && user && (!userData.preferences || userData.preferences.artists.length === 0)) {
-        setShowTasteModal(true);
-        localStorage.setItem('ytify_taste_completed', 'true');
+      const res = await fetch(apiUrl(`/api/related?videoId=${encodeURIComponent(videoId)}`));
+      if (res.ok) {
+        const data = await res.json();
+        const related: Song[] = data.songs || [];
+        return related;
       }
-    } catch {}
-  }, [user, userData.preferences]);
+    } catch (err) {
+      console.warn('Failed to fetch related autoplay tracks:', err);
+    } finally {
+      isFetchingRelatedRef.current = false;
+    }
+    return [];
+  };
 
-  // Synchronous, instant playback trigger (guarantees browser user-activation is never lost)
+  const playSongOnPlayer = (song: Song) => {
+    if (!song.videoId) return;
+
+    if (!isPlayerReadyRef.current || !ytPlayerRef.current?.loadVideoById) {
+      pendingSongRef.current = song;
+      return;
+    }
+
+    try {
+      ytPlayerRef.current.loadVideoById({
+        videoId: song.videoId,
+        startSeconds: 0
+      });
+      setIsPlaying(true);
+      setCurrentTime(0);
+
+      // Reset last fetched cache for new seed song
+      lastFetchedRelatedForRef.current = '';
+    } catch (e) {
+      console.warn('Error loading video in YT Player:', e);
+    }
+  };
+
+  // Helper to get duration seconds from string (e.g. "3:45" -> 225)
+  const parseDuration = (durStr?: string): number => {
+    if (!durStr) return 0;
+    const parts = durStr.split(':').map(Number);
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return 0;
+  };
+
   const handlePlaySong = (song: Song) => {
     setCurrentSong(song);
     currentSongRef.current = song;
-    addToHistory(song);
-    setCurrentTime(0);
-
-    if (!queue.find((s) => s.videoId === song.videoId)) {
-      setQueue((prev) => [...prev, song]);
-      setQueueIndex(queue.length);
-    } else {
-      setQueueIndex(queue.findIndex((s) => s.videoId === song.videoId));
+    if (song.duration) {
+      const parsed = parseDuration(song.duration);
+      if (parsed > 0) setDuration(parsed);
     }
 
-    const playVideoId = (vid: string) => {
-      if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
-        try {
-          ytPlayerRef.current.unMute?.();
-          ytPlayerRef.current.setVolume?.(volume || 100);
-          ytPlayerRef.current.loadVideoById({
-            videoId: vid,
-            startSeconds: 0,
-            suggestedQuality: 'small'
-          });
-          ytPlayerRef.current.unMute?.();
-          ytPlayerRef.current.playVideo?.();
-          setIsPlaying(true);
-          return;
-        } catch (err) {
-          console.warn('Direct playback call error:', err);
-        }
-      }
+    // Set queue if empty or contains only one track
+    if (queue.length <= 1) {
+      setQueue([song]);
+      originalQueueRef.current = [song];
+      setQueueIndex(0);
 
-      // If player not initialized yet, kick off initialization right now
-      initPlayer();
-
-      pendingSongRef.current = { ...song, videoId: vid };
-      let attempts = 0;
-      const pollTimer = setInterval(() => {
-        attempts++;
-        if (!ytPlayerRef.current) {
-          initPlayer();
-        }
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
-          clearInterval(pollTimer);
-          try {
-            ytPlayerRef.current.unMute?.();
-            ytPlayerRef.current.setVolume?.(volume || 100);
-            ytPlayerRef.current.loadVideoById({
-              videoId: vid,
-              startSeconds: 0,
-              suggestedQuality: 'small'
+      // Proactively fetch related songs right away to keep continuous playback ready
+      if (song.videoId) {
+        fetchRelatedSongs(song.videoId).then((related) => {
+          if (related && related.length > 0) {
+            setQueue((prev) => {
+              const existingIds = new Set(prev.map(s => s.videoId));
+              const uniqueRelated = related.filter(r => !existingIds.has(r.videoId));
+              const updated = [...prev, ...uniqueRelated];
+              originalQueueRef.current = [...originalQueueRef.current, ...uniqueRelated];
+              return updated;
             });
-            ytPlayerRef.current.unMute?.();
-            ytPlayerRef.current.playVideo?.();
-            setIsPlaying(true);
-            pendingSongRef.current = null;
-          } catch (e) {
-            console.warn('Deferred playback error:', e);
           }
-        } else if (attempts > 80) {
-          clearInterval(pollTimer);
-        }
-      }, 50);
-    };
-
-    // If already a valid 11-character YouTube videoId, play immediately
-    if (song.videoId && song.videoId.length === 11 && !song.videoId.includes('itunes')) {
-      playVideoId(song.videoId);
-    } else {
-      // Resolve valid 11-char YouTube ID for uncommon or external results
-      const artistStr = typeof song.artist === 'string' ? song.artist : song.artist?.name || '';
-      fetch(apiUrl(`/api/search?q=${encodeURIComponent(song.name + ' ' + artistStr)}`))
-        .then(r => r.json())
-        .then(data => {
-          if (data.songs?.[0]?.videoId && data.songs[0].videoId.length === 11) {
-            playVideoId(data.songs[0].videoId);
-          }
-        })
-        .catch(console.error);
-    }
-  };
-
-  const handlePlayPlaylist = (playlistSongs: Song[], startIndex: number = 0) => {
-    if (!playlistSongs || playlistSongs.length === 0) return;
-    setQueue(playlistSongs);
-    setQueueIndex(startIndex);
-    handlePlaySong(playlistSongs[startIndex]);
-  };
-
-  const handleClosePlayer = () => {
-    try {
-      if (ytPlayerRef.current) {
-        ytPlayerRef.current.pauseVideo?.();
-        ytPlayerRef.current.stopVideo?.();
+        });
       }
-    } catch (e) {}
-    setIsPlaying(false);
-    setCurrentSong(null);
+    } else {
+      const idx = queue.findIndex(s => s.videoId === song.videoId);
+      if (idx !== -1) {
+        setQueueIndex(idx);
+      } else {
+        setQueue(prev => [...prev, song]);
+        originalQueueRef.current = [...originalQueueRef.current, song];
+        setQueueIndex(queue.length);
+      }
+    }
+
+    playSongOnPlayer(song);
+    addToHistory(song);
+
+    // Expand player when user plays a song
+    setAutoExpandPlayer(true);
+    setTimeout(() => setAutoExpandPlayer(false), 500);
+  };
+
+  // Fisher-Yates true randomization algorithm
+  const shuffleArray = <T,>(arr: T[]): T[] => {
+    const copy = [...arr];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  // Toggle Shuffle with true state restoration and continuous queue preservation
+  const handleToggleShuffle = () => {
+    setIsShuffle(prev => {
+      const nextState = !prev;
+      if (nextState) {
+        // TURN ON SHUFFLE: Keep current track first, shuffle remaining queue
+        if (queue.length > 1) {
+          const activeTrack = queue[queueIndex] || currentSong;
+          const remaining = queue.filter(s => s.videoId !== activeTrack?.videoId);
+          const shuffledRemaining = shuffleArray(remaining);
+          const newQueue = activeTrack ? [activeTrack, ...shuffledRemaining] : shuffledRemaining;
+          setQueue(newQueue);
+          setQueueIndex(0);
+        }
+      } else {
+        // TURN OFF SHUFFLE: Restore original unshuffled queue
+        if (originalQueueRef.current.length > 0) {
+          const activeTrack = currentSong;
+          const restored = [...originalQueueRef.current];
+          const newIdx = activeTrack ? restored.findIndex(s => s.videoId === activeTrack.videoId) : 0;
+          setQueue(restored);
+          setQueueIndex(newIdx !== -1 ? newIdx : 0);
+        }
+      }
+      return nextState;
+    });
+  };
+
+  const handlePlayPlaylist = (songs: Song[], startIndex = 0, shouldShuffle = false) => {
+    if (!songs || songs.length === 0) return;
+    
+    // Store pristine unshuffled list for restore
+    originalQueueRef.current = [...songs];
+
+    let targetQueue = [...songs];
+    let targetIndex = startIndex;
+
+    if (shouldShuffle || isShuffle) {
+      setIsShuffle(true);
+      const chosen = songs[startIndex];
+      const remaining = songs.filter((_, i) => i !== startIndex);
+      targetQueue = chosen ? [chosen, ...shuffleArray(remaining)] : shuffleArray(songs);
+      targetIndex = 0;
+    }
+
+    setQueue(targetQueue);
+    setQueueIndex(targetIndex);
+
+    const song = targetQueue[targetIndex];
+    if (song) {
+      setCurrentSong(song);
+      currentSongRef.current = song;
+      if (song.duration) {
+        const parsed = parseDuration(song.duration);
+        if (parsed > 0) setDuration(parsed);
+      }
+      playSongOnPlayer(song);
+      addToHistory(song);
+    }
   };
 
   const handlePlayPause = () => {
-    if (!ytPlayerRef.current) return;
+    if (!ytPlayerRef.current || !isPlayerReadyRef.current) return;
     try {
       if (isPlaying) {
-        ytPlayerRef.current.pauseVideo?.();
+        ytPlayerRef.current.pauseVideo();
         setIsPlaying(false);
       } else {
-        ytPlayerRef.current.unMute?.();
-        ytPlayerRef.current.setVolume?.(volume || 100);
-        ytPlayerRef.current.playVideo?.();
+        ytPlayerRef.current.playVideo();
         setIsPlaying(true);
       }
     } catch (e) {
-      console.warn('Play/pause toggle error:', e);
+      console.warn('Error toggling play/pause:', e);
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (queue.length === 0) return;
-    const nextIdx = (queueIndex + 1) % queue.length;
-    setQueueIndex(nextIdx);
-    const nextSong = queue[nextIdx];
-    if (nextSong) {
-      handlePlaySong(nextSong);
+
+    const nextIndex = queueIndex + 1;
+    if (nextIndex < queue.length) {
+      setQueueIndex(nextIndex);
+      const song = queue[nextIndex];
+      setCurrentSong(song);
+      currentSongRef.current = song;
+      if (song.duration) {
+        const parsed = parseDuration(song.duration);
+        if (parsed > 0) setDuration(parsed);
+      }
+      playSongOnPlayer(song);
+      addToHistory(song);
+
+      // Proactively fetch more related songs if we are nearing the end of the queue (<= 2 tracks left)
+      if (nextIndex >= queue.length - 2 && song.videoId) {
+        fetchRelatedSongs(song.videoId).then((related) => {
+          if (related && related.length > 0) {
+            setQueue((prev) => {
+              const existingIds = new Set(prev.map(s => s.videoId));
+              const uniqueRelated = related.filter(r => !existingIds.has(r.videoId));
+              const updated = [...prev, ...uniqueRelated];
+              originalQueueRef.current = [...originalQueueRef.current, ...uniqueRelated];
+              return updated;
+            });
+          }
+        });
+      }
+    } else {
+      // Reached the very end of queue: seamlessly fetch and play related songs without stopping!
+      const activeSeed = currentSongRef.current || queue[queue.length - 1];
+      if (activeSeed && activeSeed.videoId) {
+        try {
+          const related = await fetchRelatedSongs(activeSeed.videoId);
+          if (related && related.length > 0) {
+            const existingIds = new Set(queue.map(s => s.videoId));
+            const uniqueRelated = related.filter(r => !existingIds.has(r.videoId));
+            if (uniqueRelated.length > 0) {
+              const nextQueue = [...queue, ...uniqueRelated];
+              originalQueueRef.current = [...originalQueueRef.current, ...uniqueRelated];
+              setQueue(nextQueue);
+              setQueueIndex(queue.length);
+              const nextSong = uniqueRelated[0];
+              setCurrentSong(nextSong);
+              currentSongRef.current = nextSong;
+              if (nextSong.duration) {
+                const parsed = parseDuration(nextSong.duration);
+                if (parsed > 0) setDuration(parsed);
+              }
+              playSongOnPlayer(nextSong);
+              addToHistory(nextSong);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn('Auto-next fetch error:', e);
+        }
+      }
+
+      // Fallback: loop back to beginning
+      setQueueIndex(0);
+      const song = queue[0];
+      setCurrentSong(song);
+      currentSongRef.current = song;
+      playSongOnPlayer(song);
+      addToHistory(song);
     }
   };
 
   const handlePrev = () => {
     if (queue.length === 0) return;
-    const prevIdx = queueIndex - 1 < 0 ? queue.length - 1 : queueIndex - 1;
-    setQueueIndex(prevIdx);
-    const prevSong = queue[prevIdx];
-    if (prevSong) {
-      handlePlaySong(prevSong);
+    // If >3s into the song, restart it
+    if (currentTime > 3) {
+      handleSeek(0);
+      return;
+    }
+    const prevIndex = queueIndex - 1;
+    if (prevIndex >= 0) {
+      setQueueIndex(prevIndex);
+      const song = queue[prevIndex];
+      setCurrentSong(song);
+      currentSongRef.current = song;
+      if (song.duration) {
+        const parsed = parseDuration(song.duration);
+        if (parsed > 0) setDuration(parsed);
+      }
+      playSongOnPlayer(song);
+      addToHistory(song);
+    } else {
+      handleSeek(0);
     }
   };
 
   const handleSeek = (time: number) => {
-    if (ytPlayerRef.current?.seekTo) {
+    if (!ytPlayerRef.current || !isPlayerReadyRef.current) return;
+    try {
       ytPlayerRef.current.seekTo(time, true);
       setCurrentTime(time);
-    }
+    } catch {}
   };
 
   const handleVolumeChange = (vol: number) => {
     setVolume(vol);
-    if (ytPlayerRef.current) {
-      try {
-        if (vol > 0) {
-          ytPlayerRef.current.unMute?.();
-        }
-        ytPlayerRef.current.setVolume?.(vol);
-      } catch (e) {}
-    }
   };
+
+  const handleClosePlayer = () => {
+    try {
+      if (ytPlayerRef.current?.stopVideo) {
+        ytPlayerRef.current.stopVideo();
+      }
+    } catch {}
+    setIsPlaying(false);
+    setCurrentSong(null);
+    currentSongRef.current = null;
+    setQueue([]);
+    originalQueueRef.current = [];
+    setQueueIndex(-1);
+    setCurrentTime(0);
+    setDuration(0);
+  };
+
+  // Auto-expand player event from other components
+  useEffect(() => {
+    const handleExpand = () => {
+      setAutoExpandPlayer(true);
+      setTimeout(() => setAutoExpandPlayer(false), 500);
+    };
+    window.addEventListener('ytify_expand_player', handleExpand);
+    return () => window.removeEventListener('ytify_expand_player', handleExpand);
+  }, []);
 
   return (
     <>
-      {/* Permanent YouTube Audio/Media Engine Element (Rendered at opacity 1 behind dark canvas - ALWAYS mounted in DOM from initial page load) */}
-      <div
-        id="yt-audio-player-container"
-        className="fixed bottom-0 right-0 pointer-events-none select-none overflow-hidden"
-        style={{
-          width: 320,
-          height: 240,
-          opacity: 1,
-          zIndex: -20
+      {/* Hidden YouTube Iframe Audio Engine */}
+      <div 
+        id="yt-player-container" 
+        style={{ 
+          position: 'absolute', 
+          width: '1px', 
+          height: '1px', 
+          left: '-9999px', 
+          top: '-9999px', 
+          opacity: 0, 
+          pointerEvents: 'none' 
         }}
       >
-        <div id="yt-audio-player" className="w-full h-full" />
+        <div id="yt-hidden-player"></div>
       </div>
 
+      {/* Conditional Rendering: Show Landing Page for first-time unauthenticated visitors */}
       {!user ? (
-        <LandingPage />
-      ) : (
-        <div className="min-h-screen bg-[#030307] text-white flex flex-col font-sans selection:bg-[#15803d] selection:text-white relative overflow-hidden">
-          {/* Animated Liquid Background Refraction Mesh */}
-          <div className="liquid-mesh" />
-
-      {/* Top Fixed Navigation for Native Android APK */}
-      {isNativePlatform() ? (
-        <div className="fixed top-0 inset-x-0 z-40 flex flex-col items-center pointer-events-none pt-[max(env(safe-area-inset-top),10px)] pb-2 px-3.5 select-none bg-gradient-to-b from-[#030307] via-[#030307]/95 to-transparent">
-          <div className="w-full max-w-md pointer-events-auto">
-            <BottomNav currentTab={currentTab} onTabChange={handleTabChange} />
-          </div>
-        </div>
-      ) : (
-        /* Floating Rounded Liquid Glass Capsule Top Bar - Stuck at the top while scrolling */
-        <TopBar
-          onOpenProfile={handleOpenProfile}
-          onOpenAuth={handleOpenAuth}
-          user={user}
-          currentTab={currentTab}
-          onTabChange={handleTabChange}
+        <LandingPage 
+          onOpenAuth={handleOpenAuth} 
+          onContinueAsGuest={() => {
+            // Guest mode: continue to main app
+            const guestUser = {
+              uid: 'guest_' + Math.random().toString(36).substring(2, 9),
+              name: 'Guest Listener',
+              email: '',
+              photoURL: '',
+              isGuest: true
+            };
+            localStorage.setItem('ytify_current_user', JSON.stringify(guestUser));
+            window.location.reload();
+          }} 
         />
-      )}
+      ) : (
+        <div className="min-h-screen bg-[#030307] text-white flex flex-col relative overflow-x-hidden selection:bg-emerald-500/30 selection:text-white">
+          {/* Subtle Ambient Background Lighting Aura */}
+          <div className="liquid-mesh pointer-events-none" />
 
-      {/* Main View Area with Responsive Full Width on PC/Laptop & Smooth Animated Transitions */}
-      <main className={`flex-1 w-full max-w-7xl mx-auto relative z-10 px-3 sm:px-6 lg:px-8 ${isNativePlatform() ? 'pt-20 pb-32' : 'pt-3 pb-36'}`}>
-        <div 
-          className={
-            currentTab === 'home' 
-              ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
-              : 'hidden'
-          }
-        >
-          <Home 
-            onPlaySong={handlePlaySong} 
-            currentSong={currentSong} 
-            isPlaying={isPlaying}
-            onOpenAuth={handleOpenAuth} 
-            onOpenTaste={handleOpenTaste}
+          {/* Top Bar for Desktop Nav & Mobile Profile/Brand Header */}
+          <TopBar
+            currentTab={currentTab}
+            onTabChange={handleTabChange}
+            onOpenAuth={handleOpenAuth}
             onOpenProfile={handleOpenProfile}
+            userData={userData}
           />
-        </div>
-        <div 
-          className={
-            currentTab === 'search' 
-              ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
-              : 'hidden'
-          }
-        >
-          <Search onPlaySong={handlePlaySong} onPlayPlaylist={handlePlayPlaylist} currentSong={currentSong} isPlaying={isPlaying} />
-        </div>
-        <div 
-          className={
-            currentTab === 'explore' 
-              ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
-              : 'hidden'
-          }
-        >
-          <Explore onPlaySong={handlePlaySong} currentSong={currentSong} isPlaying={isPlaying} />
-        </div>
-        <div 
-          className={
-            currentTab === 'library' 
-              ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
-              : 'hidden'
-          }
-        >
-          <Library onPlaySong={handlePlaySong} onPlayPlaylist={handlePlayPlaylist} currentSong={currentSong} isPlaying={isPlaying} />
-        </div>
-        <div 
-          className={
-            currentTab === 'settings' 
-              ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
-              : 'hidden'
-          }
-        >
-          <Settings onOpenTaste={handleOpenTaste} />
-        </div>
-      </main>
 
-      {/* Floating Bottom Player & Navigation Dock */}
-      {isNativePlatform() ? (
-        /* Native APK: Only Mini Player at bottom (Nav bar is pinned to top) */
-        currentSong && (
-          <div className="fixed bottom-0 inset-x-0 z-40 flex flex-col items-center pointer-events-none pb-4 px-3.5 select-none">
-            <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#030307] via-[#030307]/85 to-transparent pointer-events-none -z-10" />
-            <div className="w-full max-w-md pointer-events-auto">
-              <Player
-                currentSong={currentSong}
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                volume={volume}
-                onPlayPause={handlePlayPause}
-                onNext={handleNext}
-                onPrev={handlePrev}
-                onSeek={handleSeek}
-                onVolumeChange={handleVolumeChange}
-                queue={queue}
-                onPlaySong={handlePlaySong}
-                dolbyEnabled={dolbyEnabled}
-                dolbyProfile={dolbyProfile}
-                autoExpand={autoExpandPlayer}
-                onShuffleQueue={handleShuffleQueue}
-                onClosePlayer={handleClosePlayer}
+          {/* Main Content Area */}
+          <main className="flex-1 overflow-x-hidden relative z-10">
+            <div 
+              className={
+                currentTab === 'home' 
+                  ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
+                  : 'hidden'
+              }
+            >
+              <Home 
+                onPlaySong={handlePlaySong} 
+                onPlayPlaylist={handlePlayPlaylist}
+                currentSong={currentSong} 
+                isPlaying={isPlaying} 
+                onNavigateSearch={(genreQuery) => {
+                  setCurrentTab('search');
+                  if (genreQuery) {
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent('ytify_execute_search', { detail: { query: genreQuery } }));
+                    }, 50);
+                  }
+                }}
               />
             </div>
-          </div>
-        )
-      ) : (
-        /* Web Application: Mobile has floating dock; Desktop has full-width luxury persistent bottom bar & top nav */
-        <div className="fixed bottom-0 inset-x-0 z-40 flex flex-col items-center pointer-events-none pb-3 md:pb-0 px-3.5 md:px-0 select-none">
-          {/* Soft Dark Bottom Gradient Scrim behind the dock on mobile */}
-          <div className="md:hidden absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-[#030307] via-[#030307]/90 to-transparent pointer-events-none -z-10" />
-
-          {/* 1. Player (Mobile mini pill or Desktop full-width persistent dock) */}
-          {currentSong && (
-            <div className="w-full max-w-md md:max-w-none pointer-events-auto md:mb-0 mb-2">
-              <Player
-                currentSong={currentSong}
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                volume={volume}
-                onPlayPause={handlePlayPause}
-                onNext={handleNext}
-                onPrev={handlePrev}
-                onSeek={handleSeek}
-                onVolumeChange={handleVolumeChange}
-                queue={queue}
-                onPlaySong={handlePlaySong}
-                dolbyEnabled={dolbyEnabled}
-                dolbyProfile={dolbyProfile}
-                autoExpand={autoExpandPlayer}
-                onShuffleQueue={handleShuffleQueue}
-                onClosePlayer={handleClosePlayer}
+            <div 
+              className={
+                currentTab === 'search' 
+                  ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
+                  : 'hidden'
+              }
+            >
+              <Search 
+                onPlaySong={handlePlaySong} 
+                onPlayPlaylist={handlePlayPlaylist}
+                currentSong={currentSong} 
+                isPlaying={isPlaying} 
               />
+            </div>
+            <div 
+              className={
+                currentTab === 'explore' 
+                  ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
+                  : 'hidden'
+              }
+            >
+              <Explore onPlaySong={handlePlaySong} currentSong={currentSong} isPlaying={isPlaying} />
+            </div>
+            <div 
+              className={
+                currentTab === 'library' 
+                  ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
+                  : 'hidden'
+              }
+            >
+              <Library onPlaySong={handlePlaySong} onPlayPlaylist={handlePlayPlaylist} currentSong={currentSong} isPlaying={isPlaying} />
+            </div>
+            <div 
+              className={
+                currentTab === 'settings' 
+                  ? `block ${transitionDirection === 'forward' ? 'tab-pane-enter-forward' : 'tab-pane-enter-backward'}` 
+                  : 'hidden'
+              }
+            >
+              <Settings onOpenTaste={handleOpenTaste} />
+            </div>
+          </main>
+
+          {/* Floating Bottom Player & Navigation Dock */}
+          {isNativePlatform() ? (
+            /* Native APK: Only Mini Player at bottom (Nav bar is pinned to top) */
+            currentSong && (
+              <div className="fixed bottom-0 inset-x-0 z-40 flex flex-col items-center pointer-events-none pb-4 px-3.5 select-none">
+                <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#030307] via-[#030307]/85 to-transparent pointer-events-none -z-10" />
+                <div className="w-full max-w-md pointer-events-auto">
+                  <Player
+                    currentSong={currentSong}
+                    isPlaying={isPlaying}
+                    currentTime={currentTime}
+                    duration={duration}
+                    volume={volume}
+                    onPlayPause={handlePlayPause}
+                    onNext={handleNext}
+                    onPrev={handlePrev}
+                    onSeek={handleSeek}
+                    onVolumeChange={handleVolumeChange}
+                    queue={queue}
+                    onPlaySong={handlePlaySong}
+                    dolbyEnabled={dolbyEnabled}
+                    dolbyProfile={dolbyProfile}
+                    autoExpand={autoExpandPlayer}
+                    isShuffle={isShuffle}
+                    onToggleShuffle={handleToggleShuffle}
+                    onShuffleQueue={handleToggleShuffle}
+                    onClosePlayer={handleClosePlayer}
+                  />
+                </div>
+              </div>
+            )
+          ) : (
+            /* Web Application: Mobile has floating dock; Desktop has full-width luxury persistent bottom bar & top nav */
+            <div className="fixed bottom-0 inset-x-0 z-40 flex flex-col items-center pointer-events-none pb-3 md:pb-0 px-3.5 md:px-0 select-none">
+              {/* Soft Dark Bottom Gradient Scrim behind the dock on mobile */}
+              <div className="md:hidden absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-[#030307] via-[#030307]/90 to-transparent pointer-events-none -z-10" />
+
+              {/* 1. Player (Mobile mini pill or Desktop full-width persistent dock) */}
+              {currentSong && (
+                <div className="w-full max-w-md md:max-w-none pointer-events-auto md:mb-0 mb-2">
+                  <Player
+                    currentSong={currentSong}
+                    isPlaying={isPlaying}
+                    currentTime={currentTime}
+                    duration={duration}
+                    volume={volume}
+                    onPlayPause={handlePlayPause}
+                    onNext={handleNext}
+                    onPrev={handlePrev}
+                    onSeek={handleSeek}
+                    onVolumeChange={handleVolumeChange}
+                    queue={queue}
+                    onPlaySong={handlePlaySong}
+                    dolbyEnabled={dolbyEnabled}
+                    dolbyProfile={dolbyProfile}
+                    autoExpand={autoExpandPlayer}
+                    isShuffle={isShuffle}
+                    onToggleShuffle={handleToggleShuffle}
+                    onShuffleQueue={handleToggleShuffle}
+                    onClosePlayer={handleClosePlayer}
+                  />
+                </div>
+              )}
+
+              {/* 2. Bottom Nav Dock (Rendered on mobile; hidden on desktop because desktop has top bar navigation!) */}
+              <div className="w-full max-w-md pointer-events-auto md:hidden">
+                <BottomNav currentTab={currentTab} onTabChange={handleTabChange} />
+              </div>
             </div>
           )}
 
-          {/* 2. Bottom Nav Dock (Rendered on mobile; hidden on desktop because desktop has top bar navigation!) */}
-          <div className="w-full max-w-md pointer-events-auto md:hidden">
-            <BottomNav currentTab={currentTab} onTabChange={handleTabChange} />
-          </div>
+          {/* Clean Sign-in with Google Only Prompt */}
+          <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+
+          {/* YouTube Music Taste / Artist Onboarding Modal */}
+          <TasteOnboardingModal isOpen={showTasteModal} onClose={() => setShowTasteModal(false)} />
+
+          {/* User Profile Details & Settings Modal */}
+          <ProfileModal
+            isOpen={showProfileModal}
+            onClose={() => setShowProfileModal(false)}
+            onOpenTaste={handleOpenTaste}
+            onNavigateTab={handleTabChange}
+            onOpenAuth={handleOpenAuth}
+          />
         </div>
       )}
-
-      {/* Clean Sign-in with Google Only Prompt */}
-      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
-
-      {/* YouTube Music Taste / Artist Onboarding Modal */}
-      <TasteOnboardingModal isOpen={showTasteModal} onClose={() => setShowTasteModal(false)} />
-
-      {/* User Profile Details & Settings Modal */}
-      <ProfileModal
-        isOpen={showProfileModal}
-        onClose={() => setShowProfileModal(false)}
-        onOpenTaste={handleOpenTaste}
-        onNavigateTab={handleTabChange}
-        onOpenAuth={handleOpenAuth}
-      />
-    </div>
-  )}
-</>
-);
+    </>
+  );
 }
 
 export function App() {
