@@ -1,4 +1,6 @@
 // Vercel Serverless Function: High-Speed YouTube Playlist Tracks Resolver
+const playlistMemCache = new Map();
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -11,6 +13,12 @@ export default async function handler(req, res) {
 
   const playlistId = id.trim();
   const browseId = playlistId.startsWith('VL') ? playlistId : 'VL' + playlistId;
+
+  // 1. Fast in-memory edge cache lookup
+  if (playlistMemCache.has(playlistId)) {
+    res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+    return res.status(200).json(playlistMemCache.get(playlistId));
+  }
 
   try {
     const ytRes = await fetch('https://www.youtube.com/youtubei/v1/browse', {
@@ -107,8 +115,7 @@ export default async function handler(req, res) {
       }
     }
 
-    res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
-    return res.status(200).json({
+    const payload = {
       playlist: {
         id: playlistId,
         title,
@@ -117,7 +124,17 @@ export default async function handler(req, res) {
         thumbnail: songs[0]?.thumbnails?.[0]?.url || thumb,
         songs
       }
-    });
+    };
+
+    if (songs.length > 0) {
+      if (playlistMemCache.size > 200) {
+        playlistMemCache.clear();
+      }
+      playlistMemCache.set(playlistId, payload);
+    }
+
+    res.setHeader('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+    return res.status(200).json(payload);
   } catch (err) {
     console.error('Playlist resolve error:', err);
     return res.status(500).json({ error: 'Failed to resolve playlist' });

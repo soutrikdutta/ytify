@@ -47,6 +47,7 @@ interface PlayerProps {
   dolbyProfile?: string;
   autoExpand?: boolean;
   onShuffleQueue?: () => void;
+  onClosePlayer?: () => void;
 }
 
 export const Player: React.FC<PlayerProps> = ({
@@ -65,7 +66,8 @@ export const Player: React.FC<PlayerProps> = ({
   dolbyEnabled = true,
   dolbyProfile = 'music',
   autoExpand = false,
-  onShuffleQueue
+  onShuffleQueue,
+  onClosePlayer
 }) => {
   const { toggleLike, isLiked, userData, addSongToPlaylist } = useAuth();
   const [isExpanded, setIsExpanded] = useState(autoExpand);
@@ -411,7 +413,7 @@ export const Player: React.FC<PlayerProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
               <button 
                 onClick={() => toggleLike(currentSong)}
                 className={`p-2 transition-transform duration-200 active:scale-130 ${songIsLiked ? 'text-[#b91c1c]' : 'text-white/40 hover:text-white/80'}`}
@@ -424,6 +426,19 @@ export const Player: React.FC<PlayerProps> = ({
               >
                 {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
               </button>
+              {onClosePlayer && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClosePlayer();
+                  }}
+                  className="p-1.5 text-white/40 hover:text-white rounded-full transition-transform active:scale-75 cursor-pointer ml-0.5"
+                  title="Close Player"
+                >
+                  <X size={18} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -608,6 +623,19 @@ export const Player: React.FC<PlayerProps> = ({
               >
                 <Maximize2 size={18} />
               </button>
+
+              {onClosePlayer && (
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClosePlayer();
+                  }}
+                  className="p-2 text-white/40 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                  title="Close Player"
+                >
+                  <X size={18} />
+                </button>
+              )}
             </div>
           </div>
         </>

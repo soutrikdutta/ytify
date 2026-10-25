@@ -509,6 +509,17 @@ function MainApp() {
     handlePlaySong(playlistSongs[startIndex]);
   };
 
+  const handleClosePlayer = () => {
+    try {
+      if (ytPlayerRef.current) {
+        ytPlayerRef.current.pauseVideo?.();
+        ytPlayerRef.current.stopVideo?.();
+      }
+    } catch (e) {}
+    setIsPlaying(false);
+    setCurrentSong(null);
+  };
+
   const handlePlayPause = () => {
     if (!ytPlayerRef.current) return;
     try {
@@ -686,6 +697,7 @@ function MainApp() {
                 dolbyProfile={dolbyProfile}
                 autoExpand={autoExpandPlayer}
                 onShuffleQueue={handleShuffleQueue}
+                onClosePlayer={handleClosePlayer}
               />
             </div>
           </div>
@@ -716,6 +728,7 @@ function MainApp() {
                 dolbyProfile={dolbyProfile}
                 autoExpand={autoExpandPlayer}
                 onShuffleQueue={handleShuffleQueue}
+                onClosePlayer={handleClosePlayer}
               />
             </div>
           )}

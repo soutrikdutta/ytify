@@ -187,19 +187,33 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
     }
   };
 
+  // In-memory instant client cache for opened playlists (0ms subsequent loads)
+  const playlistCacheRef = useRef<Map<string, { playlist: any; songs: Song[] }>>(new Map());
+
   const openPlaylistModal = async (pl: any) => {
+    // 1. Immediately display modal with initial metadata
     setSelectedPlaylist(pl);
+
+    // 2. Instant client-cache check (0ms load)
+    if (playlistCacheRef.current.has(pl.id)) {
+      const cached = playlistCacheRef.current.get(pl.id)!;
+      setSelectedPlaylist(cached.playlist);
+      setPlaylistSongs(cached.songs);
+      setLoadingPlaylist(false);
+      return;
+    }
+
     setLoadingPlaylist(true);
     setPlaylistSongs([]);
     try {
       const res = await fetch(apiUrl(`/api/playlist?id=${encodeURIComponent(pl.id)}`));
       const data = await res.json();
       if (data?.playlist) {
-        setPlaylistSongs(data.playlist.songs || []);
-        setSelectedPlaylist((prev: any) => ({
-          ...prev,
-          ...data.playlist
-        }));
+        const fullPlaylist = { ...pl, ...data.playlist };
+        const songs = data.playlist.songs || [];
+        setPlaylistSongs(songs);
+        setSelectedPlaylist(fullPlaylist);
+        playlistCacheRef.current.set(pl.id, { playlist: fullPlaylist, songs });
       }
     } catch (err) {
       console.error('Error fetching playlist tracks:', err);
@@ -210,7 +224,10 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
   };
 
   const handlePlayOnlinePlaylistAll = async (pl: any, shuffle: boolean = false) => {
-    let songs = (selectedPlaylist?.id === pl.id && playlistSongs.length > 0) ? playlistSongs : [];
+    let songs = (selectedPlaylist?.id === pl.id && playlistSongs.length > 0)
+      ? playlistSongs
+      : (playlistCacheRef.current.get(pl.id)?.songs || []);
+
     if (songs.length === 0) {
       try {
         showToast('Loading playlist tracks...');
@@ -218,8 +235,10 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
         const data = await res.json();
         if (data?.playlist?.songs && data.playlist.songs.length > 0) {
           songs = data.playlist.songs;
+          const fullPl = { ...pl, ...data.playlist };
           setPlaylistSongs(songs);
-          setSelectedPlaylist({ ...pl, ...data.playlist });
+          setSelectedPlaylist(fullPl);
+          playlistCacheRef.current.set(pl.id, { playlist: fullPl, songs });
         }
       } catch (err) {
         console.error(err);
@@ -751,7 +770,7 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
                         onClick={() => openPlaylistModal(pl)}
                         className="group flex flex-col justify-between p-3 rounded-2xl liquid-glass-card hover:bg-white/10 hover:border-emerald-500/40 cursor-pointer transition-all duration-300 active:scale-[0.98] border border-white/10 shadow-lg"
                       >
-                        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-neutral-950 mb-3 border border-white/10 shadow">
+                        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-neutral-950 mb-3 border border-white/10 shadow pointer-events-none">
                           <img 
                             src={pl.thumbnail} 
                             alt={pl.title} 
@@ -764,23 +783,9 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
                             <ListMusic size={11} className="text-emerald-400" />
                             <span>{pl.trackCount}</span>
                           </div>
-
-                          {/* Quick Play Overlay */}
-                          <div 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handlePlayOnlinePlaylistAll(pl);
-                            }}
-                            className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                            title="Play All"
-                          >
-                            <div className="w-12 h-12 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-transform">
-                              <Play size={20} fill="currentColor" className="ml-0.5" />
-                            </div>
-                          </div>
                         </div>
 
-                        <div className="flex-1 overflow-hidden">
+                        <div className="flex-1 overflow-hidden pointer-events-none">
                           <h4 className="text-sm font-bold text-white line-clamp-2 leading-snug group-hover:text-emerald-400 transition-colors" title={pl.title}>
                             {pl.title}
                           </h4>
@@ -790,7 +795,7 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
                         </div>
 
                         <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10">
-                          <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                          <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 pointer-events-none">
                             <span>Open playlist</span>
                             <ChevronRight size={13} />
                           </span>
@@ -800,7 +805,8 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
                               e.stopPropagation();
                               handlePlayOnlinePlaylistAll(pl);
                             }}
-                            className="px-3 py-1 rounded-full liquid-glass-pill hover:bg-emerald-500 hover:text-black text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                            className="px-3.5 py-1.5 rounded-full liquid-glass-pill hover:bg-emerald-500 hover:text-black text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-90 cursor-pointer shadow-md"
+                            title="Play All"
                           >
                             <Play size={12} fill="currentColor" />
                             <span>Play</span>
@@ -961,9 +967,22 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, curr
             {/* Playlist Track List */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2 no-scrollbar">
               {loadingPlaylist ? (
-                <div className="py-16 flex flex-col items-center justify-center gap-3 text-white/50">
-                  <Loader2 size={32} className="animate-spin text-emerald-400" />
-                  <p className="text-xs font-medium">Loading playlist songs...</p>
+                <div className="space-y-3 py-2">
+                  <div className="flex items-center justify-center gap-2 text-emerald-400 text-xs font-semibold py-1">
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Loading tracks from YouTube...</span>
+                  </div>
+                  {[1, 2, 3, 4, 5, 6].map((idx) => (
+                    <div key={idx} className="flex items-center gap-3 p-3 rounded-2xl liquid-glass-card animate-pulse">
+                      <div className="w-5 h-4 bg-white/10 rounded" />
+                      <div className="w-11 h-11 bg-white/10 rounded-xl flex-shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-white/10 rounded w-3/4" />
+                        <div className="h-3 bg-white/5 rounded w-1/3" />
+                      </div>
+                      <div className="w-10 h-3 bg-white/10 rounded flex-shrink-0" />
+                    </div>
+                  ))}
                 </div>
               ) : playlistSongs.length === 0 ? (
                 <div className="py-16 text-center text-white/40 text-xs">
