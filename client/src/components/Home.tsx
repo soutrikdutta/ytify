@@ -24,7 +24,10 @@ export const Home: React.FC<HomeProps> = ({
 
   const accountUid = user?.uid || 'guest';
   const userArtists = userData.preferences?.artists || [];
-  const getCacheKey = (mood: string, artists: string[]) => `ytify_feed_${accountUid}_${mood}_${artists.join('_') || 'default'}`;
+  const getCacheKey = (mood: string, artists: string[]) => 
+    mood === 'All' 
+      ? `ytify_feed_${accountUid}_All_${artists.join('_') || 'default'}` 
+      : `ytify_feed_mood_${mood}`;
 
   // Persistent feed state loaded strictly per Google Account
   const [sections, setSections] = useState<ExploreSection[]>(() => {
@@ -92,13 +95,20 @@ export const Home: React.FC<HomeProps> = ({
     loadRecentSearchShelf();
   }, [userData.searchHistory, user?.uid]);
 
-  // When switching accounts, immediately clear prior recommendations and fetch new account feed
+  // When switching accounts or moods, immediately render cached data if available (0ms instant switch)
   useEffect(() => {
-    const cached = localStorage.getItem(getCacheKey(activeMood, userArtists));
+    const key = getCacheKey(activeMood, userArtists);
+    const cached = localStorage.getItem(key);
     if (cached) {
       try {
-        setSections(JSON.parse(cached));
-        setLoading(false);
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.length > 0) {
+          setSections(parsed);
+          setLoading(false);
+        } else {
+          setSections([]);
+          setLoading(true);
+        }
       } catch {
         setSections([]);
         setLoading(true);
@@ -109,6 +119,29 @@ export const Home: React.FC<HomeProps> = ({
     }
     fetchFeed();
   }, [user?.uid, activeMood, userData.preferences]);
+
+  // Background prefetch for popular mood tabs after app load to make switching 0ms instant
+  useEffect(() => {
+    const prefetchMoods = async () => {
+      const popularMoods = ['Romance', 'Feel good', 'Party', 'Relax'];
+      for (const m of popularMoods) {
+        const key = `ytify_feed_mood_${m}`;
+        if (!localStorage.getItem(key)) {
+          try {
+            const res = await fetch(apiUrl(`/api/feed?mood=${encodeURIComponent(m)}`));
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.sections && data.sections.length > 0) {
+                localStorage.setItem(key, JSON.stringify(data.sections));
+              }
+            }
+          } catch {}
+        }
+      }
+    };
+    const timer = setTimeout(prefetchMoods, 2500);
+    return () => clearTimeout(timer);
+  }, []);
 
   const fetchFeed = async () => {
     const cacheKey = getCacheKey(activeMood, userArtists);
@@ -354,7 +387,7 @@ export const Home: React.FC<HomeProps> = ({
                 </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                {sections[0].items.slice(0, 8).map((song) => {
+                {sections[0].items.slice(0, activeMood === 'All' ? 8 : 12).map((song) => {
                   const isPlayingThis = currentSong?.videoId === song.videoId;
                   return (
                     <div
@@ -391,7 +424,7 @@ export const Home: React.FC<HomeProps> = ({
 
           {/* 4. All Curated & Personalized Shelves */}
           {sections.map((section, sIdx) => {
-            if (sIdx === 0 && sections.length > 1) return null;
+            if (sIdx === 0) return null;
             return (
               <div key={sIdx}>
                 <div className="flex items-center justify-between mb-2.5 px-1">
