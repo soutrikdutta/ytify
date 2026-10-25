@@ -22,11 +22,12 @@ import { AuthModal } from './AuthModal';
 
 interface LibraryProps {
   onPlaySong: (song: Song) => void;
+  onPlayPlaylist?: (songs: Song[], startIndex?: number) => void;
   currentSong: Song | null;
   isPlaying?: boolean;
 }
 
-export const Library: React.FC<LibraryProps> = ({ onPlaySong, currentSong, isPlaying = false }) => {
+export const Library: React.FC<LibraryProps> = ({ onPlaySong, onPlayPlaylist, currentSong, isPlaying = false }) => {
   const { 
     user, 
     userData, 
@@ -85,7 +86,11 @@ export const Library: React.FC<LibraryProps> = ({ onPlaySong, currentSong, isPla
     if (shuffle) {
       list.sort(() => Math.random() - 0.5);
     }
-    onPlaySong(list[0]);
+    if (onPlayPlaylist) {
+      onPlayPlaylist(list, 0);
+    } else {
+      onPlaySong(list[0]);
+    }
   };
 
   const playPlaylistAll = (pl: { songs: Song[] }, shuffle: boolean = false) => {
@@ -97,7 +102,11 @@ export const Library: React.FC<LibraryProps> = ({ onPlaySong, currentSong, isPla
     if (shuffle) {
       list.sort(() => Math.random() - 0.5);
     }
-    onPlaySong(list[0]);
+    if (onPlayPlaylist) {
+      onPlayPlaylist(list, 0);
+    } else {
+      onPlaySong(list[0]);
+    }
   };
 
   return (

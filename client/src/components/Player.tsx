@@ -115,6 +115,8 @@ export const Player: React.FC<PlayerProps> = ({
   useEffect(() => {
     if (autoExpand) {
       setIsClosing(false);
+      setShowQueue(false);
+      setShowMoreMenu(false);
       setIsExpanded(true);
     }
   }, [autoExpand, currentSong?.videoId]);
@@ -134,6 +136,8 @@ export const Player: React.FC<PlayerProps> = ({
       window.history.pushState({ player: 'expanded' }, '');
     } catch {}
     setIsClosing(false);
+    setShowQueue(false);
+    setShowMoreMenu(false);
     setDragY(0);
     setIsExpanded(true);
   };
@@ -141,9 +145,13 @@ export const Player: React.FC<PlayerProps> = ({
   const closeExpanded = () => {
     if (isClosing) return;
     setIsClosing(true);
+    setShowQueue(false);
+    setShowMoreMenu(false);
     setTimeout(() => {
       setIsExpanded(false);
       setIsClosing(false);
+      setShowQueue(false);
+      setShowMoreMenu(false);
       setDragY(0);
     }, 280);
   };
@@ -460,15 +468,17 @@ export const Player: React.FC<PlayerProps> = ({
                 </div>
               </div>
 
-              <div className="overflow-hidden flex-1">
+              <div 
+                onClick={openExpanded}
+                className="overflow-hidden flex-1 cursor-pointer group/info"
+              >
                 <h4 
-                  onClick={openExpanded}
-                  className="text-white text-sm font-bold truncate hover:underline hover:text-emerald-400 cursor-pointer leading-tight transition-colors"
+                  className="text-white text-sm font-bold truncate group-hover/info:text-emerald-400 leading-tight transition-colors"
                   title={currentSong.name}
                 >
                   {currentSong.name}
                 </h4>
-                <p className="text-white/50 text-xs truncate mt-0.5 font-medium flex items-center gap-2">
+                <p className="text-white/50 text-xs truncate mt-0.5 font-medium flex items-center gap-2 group-hover/info:text-white/70 transition-colors">
                   <span>{getArtistName(currentSong)}</span>
                   {isPlaying && (
                     <span className="flex items-end gap-[2px] h-3 ml-0.5 flex-shrink-0">

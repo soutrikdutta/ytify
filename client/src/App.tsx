@@ -502,6 +502,13 @@ function MainApp() {
     }
   };
 
+  const handlePlayPlaylist = (playlistSongs: Song[], startIndex: number = 0) => {
+    if (!playlistSongs || playlistSongs.length === 0) return;
+    setQueue(playlistSongs);
+    setQueueIndex(startIndex);
+    handlePlaySong(playlistSongs[startIndex]);
+  };
+
   const handlePlayPause = () => {
     if (!ytPlayerRef.current) return;
     try {
@@ -624,7 +631,7 @@ function MainApp() {
               : 'hidden'
           }
         >
-          <Search onPlaySong={handlePlaySong} currentSong={currentSong} isPlaying={isPlaying} />
+          <Search onPlaySong={handlePlaySong} onPlayPlaylist={handlePlayPlaylist} currentSong={currentSong} isPlaying={isPlaying} />
         </div>
         <div 
           className={
@@ -642,7 +649,7 @@ function MainApp() {
               : 'hidden'
           }
         >
-          <Library onPlaySong={handlePlaySong} currentSong={currentSong} isPlaying={isPlaying} />
+          <Library onPlaySong={handlePlaySong} onPlayPlaylist={handlePlayPlaylist} currentSong={currentSong} isPlaying={isPlaying} />
         </div>
         <div 
           className={

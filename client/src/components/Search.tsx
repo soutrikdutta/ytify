@@ -19,16 +19,19 @@ import {
   Mic2,
   CheckCircle2,
   Shuffle,
-  ArrowUpLeft
+  ArrowUpLeft,
+  Loader2,
+  ChevronRight
 } from 'lucide-react';
 
 interface SearchProps {
   onPlaySong: (song: Song) => void;
+  onPlayPlaylist?: (songs: Song[], startIndex?: number) => void;
   currentSong: Song | null;
   isPlaying?: boolean;
 }
 
-export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlaying = false }) => {
+export const Search: React.FC<SearchProps> = ({ onPlaySong, onPlayPlaylist, currentSong, isPlaying = false }) => {
   const { 
     toggleLike, 
     isLiked, 
@@ -40,6 +43,10 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
   } = useAuth();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Song[]>([]);
+  const [onlinePlaylists, setOnlinePlaylists] = useState<any[]>([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<any | null>(null);
+  const [playlistSongs, setPlaylistSongs] = useState<Song[]>([]);
+  const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'songs' | 'artists' | 'playlists'>('songs');
   const [songToAddToPlaylist, setSongToAddToPlaylist] = useState<Song | null>(null);
@@ -169,14 +176,72 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
     try {
       const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(trimmed)}`));
       const data = await res.json();
-      if (data && data.songs) {
-        setResults(data.songs);
+      if (data) {
+        setResults(data.songs || []);
+        setOnlinePlaylists(data.playlists || []);
       }
     } catch (err) {
       console.error('Search error:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const openPlaylistModal = async (pl: any) => {
+    setSelectedPlaylist(pl);
+    setLoadingPlaylist(true);
+    setPlaylistSongs([]);
+    try {
+      const res = await fetch(apiUrl(`/api/playlist?id=${encodeURIComponent(pl.id)}`));
+      const data = await res.json();
+      if (data?.playlist) {
+        setPlaylistSongs(data.playlist.songs || []);
+        setSelectedPlaylist((prev: any) => ({
+          ...prev,
+          ...data.playlist
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching playlist tracks:', err);
+      showToast('Error loading playlist tracks');
+    } finally {
+      setLoadingPlaylist(false);
+    }
+  };
+
+  const handlePlayOnlinePlaylistAll = async (pl: any, shuffle: boolean = false) => {
+    let songs = (selectedPlaylist?.id === pl.id && playlistSongs.length > 0) ? playlistSongs : [];
+    if (songs.length === 0) {
+      try {
+        showToast('Loading playlist tracks...');
+        const res = await fetch(apiUrl(`/api/playlist?id=${encodeURIComponent(pl.id)}`));
+        const data = await res.json();
+        if (data?.playlist?.songs && data.playlist.songs.length > 0) {
+          songs = data.playlist.songs;
+          setPlaylistSongs(songs);
+          setSelectedPlaylist({ ...pl, ...data.playlist });
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    if (!songs || songs.length === 0) {
+      showToast('Could not load songs for this playlist');
+      return;
+    }
+
+    const list = [...songs];
+    if (shuffle) {
+      list.sort(() => Math.random() - 0.5);
+    }
+
+    if (onPlayPlaylist) {
+      onPlayPlaylist(list, 0);
+    } else {
+      onPlaySong(list[0]);
+    }
+    showToast(`Playing "${pl.title}" (${list.length} tracks) 🎵`);
   };
 
   const getArtistName = (song: Song | null) => {
@@ -243,6 +308,9 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
               onClick={() => {
                 setQuery('');
                 setResults([]);
+                setOnlinePlaylists([]);
+                setSelectedPlaylist(null);
+                setPlaylistSongs([]);
                 setSuggestions([]);
                 setShowSuggestions(false);
               }}
@@ -614,114 +682,132 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
 
           {/* TAB 3: PLAYLISTS FILTER */}
           {activeFilter === 'playlists' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-white/40">
-                  Playlists & Albums
-                </h3>
-              </div>
-
+            <div className="space-y-6">
               {/* 1. Matching User Playlists */}
               {matchingCustomPlaylists.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
-                  <span className="text-[10px] font-bold uppercase text-emerald-400 px-1">Your Library</span>
-                  {matchingCustomPlaylists.map(pl => (
-                    <div
-                      key={pl.id}
-                      onClick={() => {
-                        if (pl.songs && pl.songs.length > 0) {
-                          onPlaySong(pl.songs[0]);
-                          showToast(`Playing playlist "${pl.name}"`);
-                        } else {
-                          showToast('Playlist is empty');
-                        }
-                      }}
-                      className="flex items-center justify-between p-3 rounded-2xl liquid-glass-card hover:bg-white/10 cursor-pointer transition-all active:scale-[0.98]"
-                    >
-                      <div className="flex items-center gap-3 overflow-hidden">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-[#991b1b]/40 to-[#15803d]/40 border border-white/15 flex items-center justify-center text-emerald-400 shadow">
-                          <ListMusic size={22} />
-                        </div>
-                        <div className="overflow-hidden">
-                          <p className="text-sm font-bold text-white truncate">{pl.name}</p>
-                          <p className="text-xs text-white/45 truncate mt-0.5">Your Playlist • {pl.songs?.length || 0} tracks</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="w-10 h-10 rounded-full liquid-segment-active text-white flex items-center justify-center hover:scale-105 active:scale-90 transition-all cursor-pointer"
-                        title="Play Playlist"
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 px-1 mb-3">
+                    Your Library Playlists ({matchingCustomPlaylists.length})
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {matchingCustomPlaylists.map(pl => (
+                      <div
+                        key={pl.id}
+                        onClick={() => {
+                          if (pl.songs && pl.songs.length > 0) {
+                            if (onPlayPlaylist) {
+                              onPlayPlaylist(pl.songs, 0);
+                            } else {
+                              onPlaySong(pl.songs[0]);
+                            }
+                            showToast(`Playing playlist "${pl.name}"`);
+                          } else {
+                            showToast('Playlist is empty');
+                          }
+                        }}
+                        className="flex items-center justify-between p-3.5 rounded-2xl liquid-glass-card hover:bg-white/10 cursor-pointer transition-all active:scale-[0.98] group"
                       >
-                        <Play size={16} fill="currentColor" className="ml-0.5" />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-3.5 overflow-hidden">
+                          <div className="w-13 h-13 rounded-xl bg-gradient-to-tr from-[#991b1b]/40 to-[#15803d]/40 border border-white/15 flex items-center justify-center text-emerald-400 shadow flex-shrink-0">
+                            <ListMusic size={22} />
+                          </div>
+                          <div className="overflow-hidden">
+                            <p className="text-sm font-bold text-white truncate group-hover:text-emerald-400 transition-colors">{pl.name}</p>
+                            <p className="text-xs text-white/45 truncate mt-0.5">Your Playlist • {pl.songs?.length || 0} tracks</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="w-10 h-10 rounded-full liquid-segment-active text-white flex items-center justify-center hover:scale-105 active:scale-90 transition-all cursor-pointer flex-shrink-0"
+                          title="Play Playlist"
+                        >
+                          <Play size={16} fill="currentColor" className="ml-0.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {/* 2. Curated Ytify Playlist/Album Bundles from Search */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-bold uppercase text-white/40 px-1">Ytify Curations</span>
-                
-                {/* Bundle A: Top Tracks Mix */}
-                <div
-                  onClick={() => {
-                    if (results.length > 0) {
-                      onPlaySong(results[0]);
-                      showToast(`Playing "${query || 'Search'} Mix"`);
-                    }
-                  }}
-                  className="flex items-center justify-between p-3 rounded-2xl liquid-glass-card hover:bg-white/10 cursor-pointer transition-all active:scale-[0.98]"
-                >
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-white/15 shadow">
-                      <img src={getThumbnail(topResult)} alt="Mix" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                        <Disc size={20} className="text-white/80 animate-spin" style={{ animationDuration: '8s' }} />
-                      </div>
-                    </div>
-                    <div className="overflow-hidden">
-                      <p className="text-sm font-bold text-white truncate">{query ? `${query} Mix` : 'Trending Ytify Playlist'}</p>
-                      <p className="text-xs text-white/45 truncate mt-0.5">Curated Playlist • {results.length} tracks</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="w-10 h-10 rounded-full liquid-segment-active text-white flex items-center justify-center hover:scale-105 active:scale-90 transition-all cursor-pointer"
-                    title="Play All"
-                  >
-                    <Play size={16} fill="currentColor" className="ml-0.5" />
-                  </button>
+              {/* 2. YouTube Playlists from Search */}
+              <div>
+                <div className="flex items-center justify-between px-1 mb-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-white/40 flex items-center gap-2">
+                    <ListMusic size={14} className="text-emerald-400" />
+                    <span>YouTube Playlists & Albums ({onlinePlaylists.length})</span>
+                  </h3>
+                  <span className="text-[11px] text-white/30 hidden sm:inline">Tap playlist to view full tracklist</span>
                 </div>
 
-                {/* Bundle B: Acoustic / Essentials Mix */}
-                {results.length > 3 && (
-                  <div
-                    onClick={() => {
-                      onPlaySong(results[2]);
-                      showToast(`Playing "${query || 'Music'} Essentials"`);
-                    }}
-                    className="flex items-center justify-between p-3 rounded-2xl liquid-glass-card hover:bg-white/10 cursor-pointer transition-all active:scale-[0.98]"
-                  >
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-white/15 shadow">
-                        <img src={getThumbnail(results[2])} alt="Essentials" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                          <Shuffle size={18} className="text-emerald-400" />
+                {onlinePlaylists.length === 0 ? (
+                  <div className="py-16 text-center text-white/40 text-xs">
+                    {loading ? 'Searching YouTube playlists...' : `No playlists found for "${query}". Try searching an artist or genre + playlist.`}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                    {onlinePlaylists.map((pl) => (
+                      <div
+                        key={pl.id}
+                        onClick={() => openPlaylistModal(pl)}
+                        className="group flex flex-col justify-between p-3 rounded-2xl liquid-glass-card hover:bg-white/10 hover:border-emerald-500/40 cursor-pointer transition-all duration-300 active:scale-[0.98] border border-white/10 shadow-lg"
+                      >
+                        <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-neutral-950 mb-3 border border-white/10 shadow">
+                          <img 
+                            src={pl.thumbnail} 
+                            alt={pl.title} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-transparent opacity-80" />
+                          
+                          {/* Track count badge */}
+                          <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-[10px] font-bold text-white flex items-center gap-1 border border-white/15">
+                            <ListMusic size={11} className="text-emerald-400" />
+                            <span>{pl.trackCount}</span>
+                          </div>
+
+                          {/* Quick Play Overlay */}
+                          <div 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePlayOnlinePlaylistAll(pl);
+                            }}
+                            className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                            title="Play All"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-transform">
+                              <Play size={20} fill="currentColor" className="ml-0.5" />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-hidden">
+                          <h4 className="text-sm font-bold text-white line-clamp-2 leading-snug group-hover:text-emerald-400 transition-colors" title={pl.title}>
+                            {pl.title}
+                          </h4>
+                          <p className="text-xs text-white/50 truncate mt-1">
+                            {pl.author}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10">
+                          <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                            <span>Open playlist</span>
+                            <ChevronRight size={13} />
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePlayOnlinePlaylistAll(pl);
+                            }}
+                            className="px-3 py-1 rounded-full liquid-glass-pill hover:bg-emerald-500 hover:text-black text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                          >
+                            <Play size={12} fill="currentColor" />
+                            <span>Play</span>
+                          </button>
                         </div>
                       </div>
-                      <div className="overflow-hidden">
-                        <p className="text-sm font-bold text-white truncate">{query ? `${query} Essentials` : 'Global Hit Playlists'}</p>
-                        <p className="text-xs text-white/45 truncate mt-0.5">Radio Edition • {results.length - 2} tracks</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="w-10 h-10 rounded-full liquid-segment-active text-white flex items-center justify-center hover:scale-105 active:scale-90 transition-all cursor-pointer"
-                      title="Play All"
-                    >
-                      <Play size={16} fill="currentColor" className="ml-0.5" />
-                    </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -799,6 +885,187 @@ export const Search: React.FC<SearchProps> = ({ onPlaySong, currentSong, isPlayi
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Real YouTube Playlist Detail Modal */}
+      {selectedPlaylist && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex flex-col justify-end md:justify-center items-center p-0 md:p-6 animate-in fade-in duration-200"
+          onClick={() => setSelectedPlaylist(null)}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-4xl max-h-[92vh] md:max-h-[85vh] bg-[#090b10] border border-white/15 rounded-t-3xl md:rounded-3xl flex flex-col overflow-hidden shadow-[0_25px_80px_rgba(0,0,0,0.95)] animate-in slide-in-from-bottom-6 duration-300"
+          >
+            {/* Playlist Header / Hero */}
+            <div className="relative p-5 sm:p-7 border-b border-white/10 bg-gradient-to-b from-emerald-950/40 via-white/5 to-transparent flex-shrink-0">
+              <button 
+                type="button"
+                onClick={() => setSelectedPlaylist(null)}
+                className="absolute top-4 right-4 p-2 rounded-full liquid-glass-pill text-white/50 hover:text-white transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                <div className="relative w-32 h-32 sm:w-36 sm:h-36 rounded-2xl overflow-hidden shadow-2xl border border-white/20 flex-shrink-0 bg-neutral-950 group">
+                  <img 
+                    src={selectedPlaylist.thumbnail || `https://i.ytimg.com/vi/${selectedPlaylist.id}/hqdefault.jpg`} 
+                    alt={selectedPlaylist.title} 
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                  />
+                  <div className="absolute inset-0 bg-black/20" />
+                </div>
+
+                <div className="flex-1 text-center sm:text-left overflow-hidden">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold uppercase tracking-wider mb-2">
+                    <ListMusic size={13} />
+                    <span>YouTube Playlist</span>
+                  </div>
+                  <h2 className="text-lg sm:text-2xl font-black text-white leading-tight line-clamp-2">
+                    {selectedPlaylist.title}
+                  </h2>
+                  <p className="text-white/60 text-xs sm:text-sm mt-1 font-medium">
+                    {selectedPlaylist.author || 'YouTube'} • {selectedPlaylist.trackCount || `${playlistSongs.length} tracks`}
+                  </p>
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center justify-center sm:justify-start gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => handlePlayOnlinePlaylistAll(selectedPlaylist, false)}
+                      disabled={loadingPlaylist || playlistSongs.length === 0}
+                      className="px-5 py-2.5 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Play size={16} fill="currentColor" />
+                      <span>Play All</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handlePlayOnlinePlaylistAll(selectedPlaylist, true)}
+                      disabled={loadingPlaylist || playlistSongs.length === 0}
+                      className="px-4 py-2.5 rounded-full liquid-glass-pill text-white hover:border-emerald-500/50 disabled:opacity-50 font-semibold text-xs sm:text-sm flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Shuffle size={16} />
+                      <span>Shuffle</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Playlist Track List */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2 no-scrollbar">
+              {loadingPlaylist ? (
+                <div className="py-16 flex flex-col items-center justify-center gap-3 text-white/50">
+                  <Loader2 size={32} className="animate-spin text-emerald-400" />
+                  <p className="text-xs font-medium">Loading playlist songs...</p>
+                </div>
+              ) : playlistSongs.length === 0 ? (
+                <div className="py-16 text-center text-white/40 text-xs">
+                  No tracks available in this playlist.
+                </div>
+              ) : (
+                playlistSongs.map((song, idx) => {
+                  const isCurrent = currentSong?.videoId === song.videoId;
+                  const isPlayingNow = isCurrent && isPlaying;
+                  return (
+                    <div
+                      key={`${song.videoId}-${idx}`}
+                      onClick={() => {
+                        if (onPlayPlaylist) {
+                          onPlayPlaylist(playlistSongs, idx);
+                        } else {
+                          onPlaySong(song);
+                        }
+                      }}
+                      className={`flex items-center gap-3 p-2.5 sm:p-3 rounded-2xl cursor-pointer select-none transition-all active:scale-[0.99] group ${
+                        isCurrent 
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 shadow'
+                          : 'liquid-glass-card hover:bg-white/10 text-white/80'
+                      }`}
+                    >
+                      <span className="text-xs font-mono text-white/35 w-6 text-center flex-shrink-0">
+                        {idx + 1}
+                      </span>
+
+                      <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 bg-neutral-900 border border-white/10 shadow">
+                        <img 
+                          src={getThumbnail(song)} 
+                          alt={song.name} 
+                          className="w-full h-full object-cover" 
+                        />
+                        {isPlayingNow && (
+                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                            <div className="flex items-end gap-[2px] h-3.5">
+                              <span className="w-[2px] bg-emerald-400 rounded-full animate-eq-1" />
+                              <span className="w-[2px] bg-emerald-400 rounded-full animate-eq-2" />
+                              <span className="w-[2px] bg-emerald-400 rounded-full animate-eq-3" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 overflow-hidden">
+                        <p className={`text-sm font-semibold truncate ${isCurrent ? 'text-emerald-400' : 'text-white group-hover:text-emerald-300'}`}>
+                          {song.name}
+                        </p>
+                        <p className="text-xs text-white/45 truncate mt-0.5">
+                          {getArtistName(song)}
+                        </p>
+                      </div>
+
+                      {song.duration && (
+                        <span className="text-xs font-mono text-white/40 flex-shrink-0 mr-1">
+                          {song.duration}
+                        </span>
+                      )}
+
+                      <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => toggleLike(song)}
+                          className={`p-2 rounded-full transition-transform active:scale-125 cursor-pointer ${
+                            isLiked(song.videoId) ? 'text-rose-500' : 'text-white/30 hover:text-white'
+                          }`}
+                          title="Like"
+                        >
+                          <Heart size={16} fill={isLiked(song.videoId) ? 'currentColor' : 'none'} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSongToAddToPlaylist(song)}
+                          className="p-2 text-white/30 hover:text-emerald-400 rounded-full transition-colors cursor-pointer"
+                          title="Add to Playlist"
+                        >
+                          <ListPlus size={16} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onPlayPlaylist) {
+                              onPlayPlaylist(playlistSongs, idx);
+                            } else {
+                              onPlaySong(song);
+                            }
+                          }}
+                          className="w-8 h-8 rounded-full bg-white/10 hover:bg-emerald-500 text-white hover:text-black flex items-center justify-center transition-all cursor-pointer"
+                          title="Play Track"
+                        >
+                          <Play size={14} fill="currentColor" className="ml-0.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
